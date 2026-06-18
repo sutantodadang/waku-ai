@@ -24,26 +24,49 @@ Waku helps Indonesian micro-business owners manage orders, answer customer quest
 waku-ai/
 ├── backend/          # FastAPI WhatsApp webhook + business logic
 ├── ai/               # LLM service (Bahasa Indonesia NLP)
-├── dashboard/        # Simple web UI for business owners
-└── infra/            # Docker, deployment configs
+├── dashboard/        # Streamlit web UI for business owners
+└── docker-compose.yml
 ```
 
 ## Quick Start
 
+Prerequisites: [uv](https://docs.astral.sh/uv/) (fast Python package manager).
+
 ```bash
 # Backend
 cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload
+uv sync
+uv run uvicorn main:app --reload --port 8000
 
-# AI Service
+# AI Service (separate terminal)
 cd ai
-pip install -r requirements.txt
-python assistant.py
+uv sync
+uv run uvicorn ai_service:app --reload --port 8001
 
-# Dashboard
+# Dashboard (separate terminal)
 cd dashboard
-streamlit run app.py
+uv sync
+uv run streamlit run app.py
+
+# Or all together with Docker
+docker-compose up --build
+```
+
+## Configuration
+
+Each service reads from a `.env` file in its directory. Copy the `.env.example` files:
+
+```bash
+# Backend — WhatsApp Cloud API credentials
+cp backend/.env.example backend/.env
+# Edit WHATSAPP_TOKEN, VERIFY_TOKEN in backend/.env
+
+# AI Service — LLM provider settings
+cp ai/.env.example ai/.env
+# Edit OPENAI_API_KEY, OPENAI_BASE_URL (for GLM-5-2 etc.) in ai/.env
+
+# Dashboard — backend URL
+cp dashboard/.env.example dashboard/.env
 ```
 
 ## License

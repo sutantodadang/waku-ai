@@ -1,20 +1,22 @@
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1
+FROM python:3.11-slim AS builder
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+RUN uv sync --frozen --no-dev
 
-# Copy service code
-COPY config.py llm.py nlu.py conversation.py ai_service.py ./
+FROM python:3.11-slim
+WORKDIR /app
+COPY --from=builder /app /app
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Expose port
 EXPOSE 8001
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD python3 -c "import http.client; conn=http.client.HTTPConnection('localhost:8001'); conn.request('GET','/health'); resp=conn.getresponse(); exit(0) if resp.status==200 else exit(1)"
 
-# Run
-CMD ["uvicorn", "ai_service:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uv", "run", "uvicorn", "ai_service:app", "--host", "0.0.0.0", "--port", "8001"]

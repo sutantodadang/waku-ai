@@ -1,0 +1,6 @@
+[project]
+name = "waku-ai"
+version = "0.1.0"
+description = "AI-powered WhatsApp Business assistant for Indonesian MSMEs (UMKM)"
+requires-python = ">=3.11"
+dependencies = []
