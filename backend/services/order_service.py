@@ -1,0 +1,300 @@
+"""
+Order extraction service — parse Indonesian order patterns from text,
+manage orders and provide daily summaries.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from datetime import date, datetime, timedelta
+from typing import Any, Optional
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models import Customer, Message, Order, Product
+
+logger = logging.getLogger(__name__)
+
+# ── Regex patterns for Indonesian order text ────────────────────────────────────
+# Matches patterns like:
+#   "beli 2 nasi goreng"
+#   "1 es teh"
+#   "pesan 3 ayam geprek"
+#   "2x bakso"
+#   "2 buah nasi goreng"
+#   "satu nasi goreng"
+QUANTITY_WORDS: dict[str, int] = {
+    "satu": 1, "dua": 2, "tiga": 3, "empat": 4,
+    "lima": 5, "enam": 6, "tujuh": 7, "delapan": 8, "sembilan": 9,
+    "sepuluh": 10,
+}
+
+# Match digits (including word numbers) followed by an item name.
+# Item names are sequences of word characters, spaces, hyphens, parentheses.
+# We split items on commas / 'dan' / 'sama' / 'plus' first.
+ITEM_UNIT = r"(?:x|\*|buah|porsi|gelas|bungkus|pack|kotak|lembar|piring|mangkok|botol|kardus|slop|kg|gram|liter|ml)"
+
+ITEM_PATTERN = re.compile(
+    r"(?P<qty>\d+)\s*"
+    + ITEM_UNIT + r"?\s*"
+    + r"(?P<item>[\w\s\-\(\)]+)"
+    + r"(?:\s+" + ITEM_UNIT + r")?"
+    + r"(?:\s+(?:sebesar|rp|idr)\s*(?P<price>[\d.,]+))?",
+    re.IGNORECASE,
+)
+
+# Split on commas, 'dan', 'sama', 'plus', '&' for multiple items
+SPLIT_PATTERN = re.compile(
+    r"(?:,|\s+dan\s+|\s+sama\s+|\s+plus\s+|\s*&\s*)",
+    re.IGNORECASE,
+)
+
+
+def extract_order_from_message(text: str, known_products: Optional[dict[str, float]] = None) -> list[dict]:
+    """
+    Parse a natural-language order message in Indonesian.
+    Returns a list of item dicts: [{"name": str, "quantity": int, "price": Optional[float]}]
+
+    Examples:
+        "beli 2 nasi goreng dan 1 es teh"  → [{"name":"nasi goreng","qty":2}, {"name":"es teh","qty":1}]
+        "2x bakso, 3 es jeruk"              → [{"name":"bakso","qty":2}, {"name":"es jeruk","qty":3}]
+        "saya mau pesan 1 nasi goreng"      → [{"name":"nasi goreng","qty":1}]
+    """
+    text = text.strip()
+    items: list[dict] = []
+    seen: set[str] = set()
+
+    # Strip common prefixes (beli, pesan, mau, etc.)
+    prefix_pattern = re.compile(
+        r"^(?:saya\s+)?(?:mau|ingin|pesan|beli|order|minta|tolong)\s+",
+        re.IGNORECASE,
+    )
+    text = prefix_pattern.sub("", text).strip()
+
+    # Split into segments on commas / dan / sama / plus
+    segments = SPLIT_PATTERN.split(text)
+
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+
+        # Normalise whitespace
+        segment = re.sub(r"\s+", " ", segment)
+
+        m = ITEM_PATTERN.search(segment)
+        if not m:
+            continue
+
+        raw_item = m.group("item").strip().lower()
+        # Remove trailing noise (units, etc.)
+        for unit in ["x", "*", "buah", "porsi", "gelas", "bungkus", "pack",
+                      "kotak", "lembar", "piring", "mangkok", "botol",
+                      "kardus", "slop", "kg", "gram", "liter", "ml"]:
+            if raw_item.endswith(" " + unit):
+                raw_item = raw_item[: -len(unit) - 1].strip()
+                break
+            if raw_item.endswith(unit):
+                raw_item = raw_item[: -len(unit)].strip()
+                break
+            if raw_item.endswith(" " + unit + "s"):
+                raw_item = raw_item[: -len(unit) - 2].strip()
+                break
+
+        raw_item = re.sub(r"\s+", " ", raw_item)
+        if not raw_item or raw_item in seen:
+            continue
+        seen.add(raw_item)
+
+        qty: int = 1
+        if m.group("qty"):
+            qty = int(m.group("qty"))
+        else:
+            # Check for Indonesian number words before the item
+            for word, num in QUANTITY_WORDS.items():
+                if word in segment.lower():
+                    qty = num
+                    break
+
+        price: Optional[float] = None
+        if m.group("price"):
+            price_str = m.group("price").replace(",", ".")
+            try:
+                price = float(price_str)
+            except ValueError:
+                price = None
+        elif known_products and raw_item in known_products:
+            price = known_products[raw_item]
+
+        items.append({
+            "name": raw_item,
+            "quantity": qty,
+            "price": price,
+        })
+
+    if not items:
+        # Fallback: try to extract any "number + word" pattern
+        fallback = re.findall(r"(\d+)\s*[x\*]?\s*([a-zA-Z]+(?:[\s-][a-zA-Z]+)*)", text, re.IGNORECASE)
+        for qty_str, item_name in fallback:
+            name = item_name.strip().lower()
+            name = re.sub(r"\s+", " ", name)
+            if name not in seen:
+                seen.add(name)
+                items.append({"name": name, "quantity": int(qty_str), "price": None})
+
+    logger.debug("Extracted %d items from: '%s'", len(items), text[:80])
+    return items
+
+
+# ── Database operations ─────────────────────────────────────────────────────────
+async def get_or_create_customer(
+    session: AsyncSession,
+    business_id: int,
+    phone_number: str,
+    name: Optional[str] = None,
+) -> Customer:
+    """Look up a customer by phone + business, or create them."""
+    stmt = select(Customer).where(
+        Customer.business_id == business_id,
+        Customer.phone_number == phone_number,
+    )
+    result = await session.execute(stmt)
+    customer = result.scalar_one_or_none()
+
+    if customer is None:
+        customer = Customer(
+            phone_number=phone_number,
+            business_id=business_id,
+            name=name or phone_number,
+        )
+        session.add(customer)
+        await session.flush()
+        logger.info("Created customer %s for business %d", phone_number, business_id)
+    elif name and customer.name != name:
+        customer.name = name
+        await session.flush()
+
+    return customer
+
+
+async def save_message(
+    session: AsyncSession,
+    business_id: int,
+    customer_id: int,
+    content: str,
+    direction: str,
+    wamid: Optional[str] = None,
+) -> Message:
+    """Persist a message to the database."""
+    msg = Message(
+        business_id=business_id,
+        customer_id=customer_id,
+        content=content,
+        direction=direction,
+        wamid=wamid,
+    )
+    session.add(msg)
+    await session.flush()
+    return msg
+
+
+async def create_order(
+    session: AsyncSession,
+    business_id: int,
+    customer_id: int,
+    items: list[dict],
+) -> Order:
+    """Create an order from a list of item dicts."""
+    total = sum(
+        (it.get("price") or 0) * (it.get("quantity") or 1)
+        for it in items
+    )
+    order = Order(
+        business_id=business_id,
+        customer_id=customer_id,
+        items=items,
+        total=total,
+        status="pending",
+    )
+    session.add(order)
+    await session.flush()
+    logger.info(
+        "Order #%d created — business=%d customer=%d total=%.2f",
+        order.id, business_id, customer_id, total,
+    )
+    return order
+
+
+async def get_orders_for_business(
+    session: AsyncSession,
+    business_id: int,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[Order]:
+    """Fetch orders for a given business, newest first."""
+    stmt = (
+        select(Order)
+        .where(Order.business_id == business_id)
+        .order_by(Order.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_daily_summary(session: AsyncSession, business_id: int, day: Optional[date] = None) -> dict:
+    """
+    Aggregate daily statistics for a business.
+    Returns:
+        {
+            "date": "2025-01-15",
+            "total_conversations": int,   # unique customers who messaged
+            "total_orders": int,
+            "total_revenue": float,
+            "orders": [Order, ...]
+        }
+    """
+    if day is None:
+        day = date.today()
+
+    day_start = datetime.combine(day, datetime.min.time())
+    day_end = datetime.combine(day, datetime.max.time())
+
+    # Count unique customers who had inbound messages today
+    conv_stmt = (
+        select(func.count(func.distinct(Message.customer_id)))
+        .where(
+            Message.business_id == business_id,
+            Message.direction == "inbound",
+            Message.timestamp >= day_start,
+            Message.timestamp <= day_end,
+        )
+    )
+    conv_result = await session.execute(conv_stmt)
+    total_conversations: int = conv_result.scalar() or 0
+
+    # Orders today
+    order_stmt = (
+        select(Order)
+        .where(
+            Order.business_id == business_id,
+            Order.created_at >= day_start,
+            Order.created_at <= day_end,
+        )
+        .order_by(Order.created_at.desc())
+    )
+    order_result = await session.execute(order_stmt)
+    orders = list(order_result.scalars().all())
+
+    total_orders = len(orders)
+    total_revenue = sum(o.total for o in orders)
+
+    return {
+        "date": day.isoformat(),
+        "total_conversations": total_conversations,
+        "total_orders": total_orders,
+        "total_revenue": total_revenue,
+        "orders": orders,
+    }
