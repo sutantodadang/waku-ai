@@ -423,7 +423,11 @@ async def auth_otp_verify(body: OTPVerify, session: AsyncSession = Depends(get_d
     """Confirm a reverse-OTP. The supplied code must (a) match a record that was
     received from the owner's WhatsApp (consumed by the webhook), (b) still be
     within its expiry, and (c) match the given phone. Single-use: the record is
-    deleted on success so a verified code cannot be replayed for another JWT."""
+    deleted on success so a verified code cannot be replayed for another JWT.
+
+    Auto-signup: if no account exists for this verified phone, a passwordless
+    account (synthetic email, placeholder business name) is provisioned — making
+    reverse-OTP a full WhatsApp-native signup + login path."""
     norm = _normalize_phone(body.phone_number)
     now = datetime.utcnow()
     stmt = (
@@ -446,10 +450,26 @@ async def auth_otp_verify(body: OTPVerify, session: AsyncSession = Depends(get_d
     businesses = (await session.execute(select(Business))).scalars().all()
     business = next((b for b in businesses if _normalize_phone(b.phone_number) == norm), None)
     if business is None:
-        raise HTTPException(status_code=404, detail="Nomor ini belum terhubung ke bisnis mana pun.")
+        # OTP auto-signup — provision a passwordless account for this verified phone.
+        business = Business(
+            phone_number=body.phone_number,
+            business_name=f"Bisnis {body.phone_number}",  # placeholder; owner can rename
+            settings={},
+        )
+        session.add(business)
+        await session.flush()
+        logger.info("OTP auto-signup: created business #%d for %s.", business.id, body.phone_number)
+
     user = (await session.execute(select(User).where(User.business_id == business.id))).scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=404, detail="Akun untuk bisnis ini belum ada.")
+        synthetic_email = f"wa-{norm}@waku.local"  # passwordless WhatsApp account
+        user = (await session.execute(select(User).where(User.email == synthetic_email))).scalar_one_or_none()
+        if user is None:
+            user = User(email=synthetic_email, password_hash=None, business_id=business.id)
+            session.add(user)
+        else:
+            user.business_id = business.id
+        await session.flush()
 
     # Single-use: spend the OTP so it cannot be replayed.
     await session.delete(matched)
