@@ -17,17 +17,41 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # ── Configuration ───────────────────────────────────────────────────────────────
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "waku_verify_123")
 APP_SECRET = os.getenv("APP_SECRET", "")
-PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "")
-API_VERSION = "v18.0"
+API_VERSION = "v21.0"
 
-if PHONE_NUMBER_ID:
-    API_BASE = f"https://graph.facebook.com/{API_VERSION}/{PHONE_NUMBER_ID}"
-else:
-    API_BASE = None
-    logger.warning("PHONE_NUMBER_ID not set — WhatsApp send API will not work.")
+# Platform-level credentials — the OWN number Waku uses for the reverse-OTP /
+# system channel. Per-business sends pass their own phone_number_id + token.
+# Accept several env names for backward compat (.env.example used WHATSAPP_PHONE_NUMBER_ID).
+PLATFORM_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+PLATFORM_PHONE_NUMBER_ID = (
+    os.getenv("PLATFORM_PHONE_NUMBER_ID")
+    or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    or os.getenv("PHONE_NUMBER_ID")
+    or ""
+)
+
+GRAPH_BASE = f"https://graph.facebook.com/{API_VERSION}"
+
+
+def _resolve_credentials(phone_number_id: Optional[str], access_token: Optional[str]) -> tuple[str, str]:
+    """Pick per-business creds when given, else fall back to platform creds."""
+    return (phone_number_id or PLATFORM_PHONE_NUMBER_ID, access_token or PLATFORM_TOKEN)
+
+
+def extract_phone_number_id(payload: dict) -> Optional[str]:
+    """Pull `metadata.phone_number_id` from a Meta webhook payload (routing key)."""
+    try:
+        return (
+            payload.get("entry", [{}])[0]
+            .get("changes", [{}])[0]
+            .get("value", {})
+            .get("metadata", {})
+            .get("phone_number_id")
+        )
+    except (IndexError, AttributeError):
+        return None
 
 
 # ── Webhook verification ────────────────────────────────────────────────────────
@@ -65,18 +89,27 @@ def verify_signature(payload_body: bytes, x_hub_signature_256: Optional[str]) ->
 
 
 # ── Send messages ───────────────────────────────────────────────────────────────
-async def send_message(to: str, body: str) -> dict:
+async def send_message(
+    to: str,
+    body: str,
+    *,
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None,
+) -> dict:
     """
     Send a plain-text WhatsApp message via Cloud API.
+    Pass a business's `phone_number_id` + `access_token` to send from that
+    business's number; omit both to use the platform number.
     Returns the API response JSON dict.
     """
-    if not API_BASE:
-        logger.error("Cannot send message: PHONE_NUMBER_ID is not configured.")
-        return {"error": "PHONE_NUMBER_ID not configured"}
+    pid, token = _resolve_credentials(phone_number_id, access_token)
+    if not pid or not token:
+        logger.error("Cannot send message: no phone_number_id/token (business not connected).")
+        return {"error": "whatsapp_not_configured"}
 
-    url = f"{API_BASE}/messages"
+    url = f"{GRAPH_BASE}/{pid}/messages"
     headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
     payload = {
@@ -102,18 +135,26 @@ async def send_message(to: str, body: str) -> dict:
             raise
 
 
-async def send_template_message(to: str, template_name: str, params: Optional[dict] = None) -> dict:
+async def send_template_message(
+    to: str,
+    template_name: str,
+    params: Optional[dict] = None,
+    *,
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None,
+) -> dict:
     """
     Send a WhatsApp template (HSM) message.
     `params` should be a dict mapping placeholder names to values.
     """
-    if not API_BASE:
-        logger.error("Cannot send template: PHONE_NUMBER_ID is not configured.")
-        return {"error": "PHONE_NUMBER_ID not configured"}
+    pid, token = _resolve_credentials(phone_number_id, access_token)
+    if not pid or not token:
+        logger.error("Cannot send template: no phone_number_id/token configured.")
+        return {"error": "whatsapp_not_configured"}
 
-    url = f"{API_BASE}/messages"
+    url = f"{GRAPH_BASE}/{pid}/messages"
     headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 

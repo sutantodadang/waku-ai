@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import secrets
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,25 +21,41 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import close_db, get_db, init_db
-from models import Business, Customer, Message, Order, Product
+from auth import (
+    create_access_token,
+    get_current_business,
+    hash_password,
+    verify_password,
+)
+from database import async_session_factory, close_db, get_db, init_db
+from models import Business, Customer, Message, OTPVerification, Order, Product, User
 from schemas import (
     BusinessRegister,
     BusinessResponse,
+    ConnectWhatsApp,
     DashboardSummary,
     DailySummary,
     OrderDashboardResponse,
     OrderResponse,
     OrderStatusUpdate,
+    OTPRequest,
+    OTPRequestResponse,
+    OTPVerify,
     ProductCreate,
     ProductResponse,
     ProductUpdate,
     SettingsResponse,
     SettingsUpdate,
+    TokenResponse,
     UploadResponse,
+    UserLogin,
+    UserRegister,
+    WhatsAppConnectionResponse,
     WhatsAppWebhookPayload,
 )
 from services.whatsapp import (
+    PLATFORM_PHONE_NUMBER_ID,
+    extract_phone_number_id,
     parse_whatsapp_message,
     send_message,
     verify_signature,
@@ -112,20 +131,6 @@ DEFAULT_SETTINGS: dict = {
 }
 
 
-async def _get_default_business(session: AsyncSession) -> Business:
-    """Resolve the default business for dashboard-facing endpoints.
-    The dashboard has no business_id concept — it manages the first registered business."""
-    stmt = select(Business).order_by(Business.id.asc()).limit(1)
-    result = await session.execute(stmt)
-    business = result.scalar_one_or_none()
-    if business is None:
-        raise HTTPException(
-            status_code=404,
-            detail="No business registered yet. Complete onboarding in the dashboard first.",
-        )
-    return business
-
-
 def _order_to_dashboard_dict(order: Order, customer_name: str) -> dict:
     return {
         "id": order.id,
@@ -160,155 +165,154 @@ async def webhook_get(
 
 
 @app.post("/webhook")
-async def webhook_post(
-    request: Request,
-):
+async def webhook_post(request: Request):
     """
     POST /webhook — receive incoming WhatsApp messages from Meta Cloud API.
-    1. Verifies HMAC signature (if APP_SECRET is set).
-    2. Parses the message payload.
-    3. Forwards to AI service for reply generation.
-    4. Sends reply back via WhatsApp Cloud API.
+    Routing by metadata.phone_number_id:
+      • our PLATFORM number → reverse-OTP / system channel (never calls the LLM)
+      • a business's number → AI auto-reply scoped to that business
     """
-    # Read raw body for signature verification
     raw_body = await request.body()
-
-    # Verify signature
     signature = request.headers.get("X-Hub-Signature-256")
     if not verify_signature(raw_body, signature):
         raise HTTPException(status_code=403, detail="Invalid signature.")
 
     payload: dict = await request.json()
-    logger.debug("Webhook payload received: %s", payload)
-
-    # Parse messages from payload
     incoming_messages = parse_whatsapp_message(payload)
     if not incoming_messages:
         logger.info("No messages in webhook payload — returning 200 OK.")
         return {"status": "ok", "messages_processed": 0}
 
-    # Process each incoming message
-    for msg in incoming_messages:
-        from_number: str = msg.get("from_number", "")
-        text: str = msg.get("text", "")
-        message_id: str = msg.get("message_id", "")
+    phone_number_id = extract_phone_number_id(payload)
 
-        if not from_number or not text:
-            logger.debug("Skipping message missing from_number or text.")
-            continue
+    # ── System channel: our own platform number (reverse-OTP). Never call the LLM. ──
+    if phone_number_id and PLATFORM_PHONE_NUMBER_ID and phone_number_id == PLATFORM_PHONE_NUMBER_ID:
+        matched = 0
+        async with async_session_factory() as session:
+            for msg in incoming_messages:
+                if await _handle_platform_message(session, msg.get("from_number", ""), msg.get("text", "")):
+                    matched += 1
+            await session.commit()
+        return {"status": "ok", "channel": "platform", "otp_matched": matched}
 
-        logger.info("Processing message from %s: %.80s", from_number, text)
+    # ── Tenant channel: resolve the business by phone_number_id (no fallback). ──
+    async with async_session_factory() as session:
+        business = await _resolve_business(session, phone_number_id)
+        if business is None:
+            logger.warning("No business registered for phone_number_id=%s — ignoring.", phone_number_id)
+            return {"status": "ok", "messages_processed": 0, "reason": "unknown_business"}
 
-        # We need a business context — use the first registered business or
-        # resolve dynamically from the recipient phone number (phone_number_id).
-        # For now, use the business that matches the recipient.
-        # In a multi-business scenario, the webhook payload's `metadata.phone_number_id`
-        # tells us which business this message is for.
-        business_id: Optional[int] = await _resolve_business_from_payload(payload)
+        for msg in incoming_messages:
+            from_number: str = msg.get("from_number", "")
+            text: str = msg.get("text", "")
+            message_id: str = msg.get("message_id", "")
+            if not from_number or not text:
+                continue
 
-        if business_id is None:
-            logger.warning("No matching business found for incoming message from %s — replying generic.", from_number)
-            # Still try to be helpful
-            async for session in get_db():
-                customer = await get_or_create_customer(session, business_id=1, phone_number=from_number)
-                await save_message(session, business_id=1, customer_id=customer.id, content=text, direction="inbound", wamid=message_id)
-                reply = "Maaf, saya belum bisa melayani pesanan Anda karena akun bisnis belum terdaftar. Silakan hubungi admin."
-                await send_message(from_number, reply)
-                await save_message(session, business_id=1, customer_id=customer.id, content=reply, direction="outbound")
-            continue
-
-        async for session in get_db():
+            logger.info("Processing message from %s for business %d: %.80s", from_number, business.id, text)
             try:
-                # 1. Get or create customer
-                customer = await get_or_create_customer(session, business_id, from_number)
+                customer = await get_or_create_customer(session, business.id, from_number)
+                await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
 
-                # 2. Save inbound message
-                await save_message(session, business_id, customer.id, text, "inbound", wamid=message_id)
-
-                # 3. Try to extract order from message
                 order_items = extract_order_from_message(text)
                 if order_items:
-                    order = await create_order(session, business_id, customer.id, order_items)
+                    order = await create_order(session, business.id, customer.id, order_items)
                     logger.info("Order #%d auto-extracted from message.", order.id)
 
-                # 4. Forward to AI service for reply
-                reply = await _generate_ai_reply(business_id, customer.id, text, order_items if order_items else None)
+                reply = await _generate_ai_reply(
+                    session, business, customer.phone_number, text, order_items or None
+                )
 
-                # 5. Send reply via WhatsApp
-                await send_message(from_number, reply)
-
-                # 6. Save outbound message
-                await save_message(session, business_id, customer.id, reply, "outbound")
-
+                await send_message(
+                    from_number, reply,
+                    phone_number_id=business.phone_number_id,
+                    access_token=business.access_token,
+                )
+                await save_message(session, business.id, customer.id, reply, "outbound")
             except Exception as exc:
                 logger.exception("Error processing message from %s: %s", from_number, exc)
                 try:
-                    await send_message(from_number, "Maaf, terjadi kesalahan. Silakan coba lagi nanti.")
+                    await send_message(
+                        from_number, "Maaf, terjadi kesalahan. Silakan coba lagi nanti.",
+                        phone_number_id=business.phone_number_id,
+                        access_token=business.access_token,
+                    )
                 except Exception:
                     logger.error("Failed to send error reply to %s", from_number)
+
+        await session.commit()
 
     return {"status": "ok", "messages_processed": len(incoming_messages)}
 
 
-async def _resolve_business_from_payload(payload: dict) -> Optional[int]:
-    """
-    Determine which business this webhook payload targets.
-    Meta sends `metadata.phone_number_id` — we look up the business by that ID.
-    If not found, fall back to the first registered business.
-    """
-    phone_number_id = (
-        payload.get("entry", [{}])[0]
-        .get("changes", [{}])[0]
-        .get("value", {})
-        .get("metadata", {})
-        .get("phone_number_id")
+def _normalize_phone(phone: str) -> str:
+    """Normalize to E.164-style digits (Indonesian 0-prefix → 62). Full-number
+    comparison — no last-N truncation, to avoid cross-number collisions."""
+    digits = re.sub(r"\D", "", phone or "")
+    if digits.startswith("0"):
+        digits = "62" + digits[1:]
+    return digits
+
+
+async def _resolve_business(session: AsyncSession, phone_number_id: Optional[str]) -> Optional[Business]:
+    """Look up the business that owns this Meta phone_number_id. No default fallback."""
+    if not phone_number_id:
+        return None
+    stmt = select(Business).where(Business.phone_number_id == phone_number_id)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def _handle_platform_message(session: AsyncSession, from_number: str, text: str) -> bool:
+    """Match an inbound platform-channel message against a pending reverse-OTP code,
+    consuming it on success. Returns True if an OTP was verified."""
+    if not from_number or not text:
+        return False
+    now = datetime.utcnow()
+    stmt = (
+        select(OTPVerification)
+        .where(OTPVerification.consumed == False, OTPVerification.expires_at >= now)  # noqa: E712
+        .order_by(OTPVerification.created_at.desc())
     )
-
-    if phone_number_id:
-        async for session in get_db():
-            stmt = select(Business).where(Business.phone_number == phone_number_id)
-            result = await session.execute(stmt)
-            business = result.scalar_one_or_none()
-            if business:
-                return business.id
-
-    # Fallback: return first registered business
-    async for session in get_db():
-        stmt = select(Business).limit(1)
-        result = await session.execute(stmt)
-        business = result.scalar_one_or_none()
-        if business:
-            return business.id
-
-    return None
+    otps = (await session.execute(stmt)).scalars().all()
+    sender = _normalize_phone(from_number)
+    for otp in otps:
+        if otp.code in text and _normalize_phone(otp.phone_number) == sender:
+            otp.consumed = True
+            await session.flush()
+            logger.info("Reverse-OTP verified for %s (purpose=%s).", from_number, otp.purpose)
+            return True
+    return False
 
 
 async def _generate_ai_reply(
-    business_id: int,
-    customer_id: int,
+    session: AsyncSession,
+    business: Business,
+    session_id: str,
     message_text: str,
     extracted_order: Optional[list[dict]] = None,
 ) -> str:
     """
-    Forward the message to the AI service for a smart reply.
-    If the AI service is unreachable, return a sensible fallback.
+    Forward the message to the AI service (/ai/reply), scoped to this business's
+    catalog + context. Falls back to a sensible Indonesian reply when the AI
+    service is unreachable.
     """
-    import httpx
+    products = (
+        await session.execute(select(Product).where(Product.business_id == business.id))
+    ).scalars().all()
+    catalog = [{"name": p.name, "price": p.price, "stock": True} for p in products]
 
     payload: dict[str, Any] = {
-        "business_id": business_id,
-        "customer_id": customer_id,
-        "message": message_text,
+        "incoming_message": message_text,
+        "session_id": session_id,
+        "business_context": {"store_name": business.business_name, "owner_name": ""},
+        "catalog": catalog,
     }
-    if extracted_order:
-        payload["extracted_order"] = extracted_order
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(f"{AI_SERVICE_URL}/chat", json=payload)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(f"{AI_SERVICE_URL}/ai/reply", json=payload)
             resp.raise_for_status()
-            data = resp.json()
-            reply = data.get("reply", "")
+            reply = resp.json().get("reply", "")
             if reply:
                 return reply
     except httpx.RequestError as exc:
@@ -331,6 +335,205 @@ async def _generate_ai_reply(
         "• \"saya mau pesan 3 ayam geprek\"\n\n"
         "Ada yang bisa saya bantu?"
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AUTH API — dashboard login for UMKM owners
+# ═══════════════════════════════════════════════════════════════════════════════
+
+OTP_TTL_MINUTES = 10
+
+
+@app.post("/api/auth/register", response_model=TokenResponse)
+async def auth_register(body: UserRegister, session: AsyncSession = Depends(get_db)):
+    """Register an owner + create their business in one step. Returns a JWT."""
+    existing = (await session.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="Email sudah terdaftar.")
+
+    dup_phone = (await session.execute(
+        select(Business).where(Business.phone_number == body.phone_number)
+    )).scalar_one_or_none()
+    if dup_phone:
+        raise HTTPException(status_code=409, detail="Nomor WhatsApp sudah terdaftar.")
+
+    business = Business(phone_number=body.phone_number, business_name=body.business_name, settings={})
+    session.add(business)
+    await session.flush()
+
+    user = User(email=body.email, password_hash=hash_password(body.password), business_id=business.id)
+    session.add(user)
+    await session.flush()
+
+    token = create_access_token(user.id, business.id, user.email)
+    logger.info("Owner %s registered business #%d.", user.email, business.id)
+    return TokenResponse(access_token=token, business_id=business.id, business_name=business.business_name)
+
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+async def auth_login(body: UserLogin, session: AsyncSession = Depends(get_db)):
+    """Email + password login. Returns a JWT."""
+    user = (await session.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
+    if user is None or not user.password_hash or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Email atau password salah.")
+    business_name = None
+    if user.business_id:
+        business = (await session.execute(select(Business).where(Business.id == user.business_id))).scalar_one_or_none()
+        business_name = business.business_name if business else None
+    token = create_access_token(user.id, user.business_id, user.email)
+    return TokenResponse(access_token=token, business_id=user.business_id, business_name=business_name)
+
+
+@app.post("/api/auth/otp/request", response_model=OTPRequestResponse)
+async def auth_otp_request(body: OTPRequest, session: AsyncSession = Depends(get_db)):
+    """Issue a reverse-OTP code. The owner sends this code from their WhatsApp to
+    the Waku platform number; the webhook verifies it (free service message)."""
+    code = f"WAKU-{secrets.randbelow(900000) + 100000}"
+    expires_at = datetime.utcnow() + timedelta(minutes=OTP_TTL_MINUTES)
+    otp = OTPVerification(phone_number=body.phone_number, code=code, purpose=body.purpose, expires_at=expires_at)
+    session.add(otp)
+    await session.flush()
+    return OTPRequestResponse(
+        code=code,
+        expires_at=expires_at,
+        instructions=(
+            f"Kirim pesan berisi kode {code} dari WhatsApp Anda ke nomor Waku, "
+            f"lalu klik Verifikasi. Kode berlaku {OTP_TTL_MINUTES} menit."
+        ),
+    )
+
+
+@app.post("/api/auth/otp/verify", response_model=TokenResponse)
+async def auth_otp_verify(body: OTPVerify, session: AsyncSession = Depends(get_db)):
+    """Confirm a reverse-OTP. The supplied code must (a) match a record that was
+    received from the owner's WhatsApp (consumed by the webhook), (b) still be
+    within its expiry, and (c) match the given phone. Single-use: the record is
+    deleted on success so a verified code cannot be replayed for another JWT."""
+    norm = _normalize_phone(body.phone_number)
+    now = datetime.utcnow()
+    stmt = (
+        select(OTPVerification)
+        .where(
+            OTPVerification.code == body.code,
+            OTPVerification.consumed == True,  # noqa: E712  (received via WhatsApp)
+            OTPVerification.expires_at >= now,
+        )
+        .order_by(OTPVerification.created_at.desc())
+    )
+    otps = (await session.execute(stmt)).scalars().all()
+    matched = next((o for o in otps if _normalize_phone(o.phone_number) == norm), None)
+    if matched is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Kode belum diterima atau sudah kedaluwarsa. Minta kode baru lalu kirim dari WhatsApp Anda.",
+        )
+
+    businesses = (await session.execute(select(Business))).scalars().all()
+    business = next((b for b in businesses if _normalize_phone(b.phone_number) == norm), None)
+    if business is None:
+        raise HTTPException(status_code=404, detail="Nomor ini belum terhubung ke bisnis mana pun.")
+    user = (await session.execute(select(User).where(User.business_id == business.id))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Akun untuk bisnis ini belum ada.")
+
+    # Single-use: spend the OTP so it cannot be replayed.
+    await session.delete(matched)
+    await session.flush()
+
+    token = create_access_token(user.id, business.id, user.email)
+    return TokenResponse(access_token=token, business_id=business.id, business_name=business.business_name)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  WHATSAPP CONNECTION API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.put("/api/whatsapp/connect", response_model=WhatsAppConnectionResponse)
+async def whatsapp_connect(
+    body: ConnectWhatsApp,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """Manually attach Meta WhatsApp credentials to the authenticated business.
+    Embedded Signup fills these same fields automatically once approved."""
+    clash = (await session.execute(
+        select(Business).where(
+            Business.phone_number_id == body.phone_number_id,
+            Business.id != business.id,
+        )
+    )).scalar_one_or_none()
+    if clash:
+        raise HTTPException(status_code=409, detail="phone_number_id sudah dipakai bisnis lain.")
+
+    business.phone_number_id = body.phone_number_id
+    business.waba_id = body.waba_id
+    business.access_token = body.access_token  # encrypted at rest via EncryptedString
+    business.is_connected = True
+    await session.flush()
+    return WhatsAppConnectionResponse(
+        is_connected=True,
+        phone_number_id=business.phone_number_id,
+        waba_id=business.waba_id,
+    )
+
+
+@app.get("/api/whatsapp/status", response_model=WhatsAppConnectionResponse)
+async def whatsapp_status(business: Business = Depends(get_current_business)):
+    """Connection status for the authenticated business."""
+    return WhatsAppConnectionResponse(
+        is_connected=business.is_connected,
+        phone_number_id=business.phone_number_id,
+        waba_id=business.waba_id,
+    )
+
+
+@app.get("/api/whatsapp/embedded-signup/callback")
+async def embedded_signup_callback(
+    code: str = Query(..., description="OAuth code from Meta Embedded Signup"),
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """
+    SKELETON — Meta Embedded Signup OAuth callback (Scope B).
+
+    Inert until the Meta app passes App Review + business verification and you
+    are a registered Tech Provider. Once live:
+      1. Exchange `code` for an access token (META_APP_ID + META_APP_SECRET).
+      2. Read the connected WABA + phone_number_id from the granted token.
+      3. Store waba_id + phone_number_id + access_token (encrypted) on `business`.
+      4. Subscribe the WABA to our webhook.
+    """
+    meta_app_id = os.getenv("META_APP_ID", "")
+    meta_app_secret = os.getenv("META_APP_SECRET", "")
+    if not meta_app_id or not meta_app_secret:
+        raise HTTPException(
+            status_code=501,
+            detail="Embedded Signup belum aktif — menunggu Meta App Review & META_APP_ID/META_APP_SECRET.",
+        )
+
+    token_url = "https://graph.facebook.com/v21.0/oauth/access_token"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(token_url, params={
+                "client_id": meta_app_id,
+                "client_secret": meta_app_secret,
+                "code": code,
+            })
+            resp.raise_for_status()
+            access_token = resp.json().get("access_token", "")
+    except Exception as exc:
+        logger.exception("Embedded Signup token exchange failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Gagal menukar kode dengan token Meta.")
+
+    if not access_token:
+        raise HTTPException(status_code=502, detail="Token kosong dari Meta.")
+
+    # WABA + phone_number_id discovery is added when the Tech Provider integration
+    # is finalized; store the token for now.
+    business.access_token = access_token
+    business.is_connected = bool(business.phone_number_id)
+    await session.flush()
+    return {"status": "ok", "is_connected": business.is_connected}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -398,14 +601,15 @@ async def business_summary(
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  DASHBOARD API — endpoints consumed by the Streamlit dashboard.
-#  These operate on the default (first registered) business, since the
-#  dashboard has no multi-tenant / business_id concept.
+#  Every endpoint is scoped to the authenticated owner's business (JWT).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/dashboard/summary", response_model=DashboardSummary)
-async def dashboard_summary(session: AsyncSession = Depends(get_db)):
+async def dashboard_summary(
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
     """GET /api/dashboard/summary — daily stats shaped for the dashboard home page."""
-    business = await _get_default_business(session)
     today = date.today()
     day_start = datetime.combine(today, datetime.min.time())
     day_end = datetime.combine(today, datetime.max.time())
@@ -467,10 +671,9 @@ async def dashboard_summary(session: AsyncSession = Depends(get_db)):
 async def dashboard_list_orders(
     status: Optional[str] = Query(None, description="Filter: baru|diproses|selesai|dibatalkan"),
     session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
 ):
-    """GET /api/orders — list orders for the default business, newest first."""
-    business = await _get_default_business(session)
-
+    """GET /api/orders — list orders for the authenticated business, newest first."""
     stmt = (
         select(Order, Customer)
         .join(Customer, Order.customer_id == Customer.id)
@@ -489,10 +692,9 @@ async def dashboard_update_order_status(
     order_id: int,
     body: OrderStatusUpdate,
     session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
 ):
     """PATCH /api/orders/{id} — update order status. Accepts Indonesian status labels."""
-    business = await _get_default_business(session)
-
     db_status = DASHBOARD_TO_DB_STATUS.get(body.status)
     if db_status is None:
         raise HTTPException(
@@ -516,9 +718,11 @@ async def dashboard_update_order_status(
 
 
 @app.get("/api/products", response_model=list[ProductResponse])
-async def dashboard_list_products(session: AsyncSession = Depends(get_db)):
-    """GET /api/products — list all products for the default business."""
-    business = await _get_default_business(session)
+async def dashboard_list_products(
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """GET /api/products — list all products for the authenticated business."""
     stmt = (
         select(Product)
         .where(Product.business_id == business.id)
@@ -531,9 +735,9 @@ async def dashboard_list_products(session: AsyncSession = Depends(get_db)):
 async def dashboard_create_product(
     body: ProductCreate,
     session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
 ):
-    """POST /api/products — create a product for the default business."""
-    business = await _get_default_business(session)
+    """POST /api/products — create a product for the authenticated business."""
     product = Product(
         business_id=business.id,
         name=body.name,
@@ -552,9 +756,9 @@ async def dashboard_update_product(
     product_id: int,
     body: ProductUpdate,
     session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
 ):
     """PUT /api/products/{id} — update a product (partial update)."""
-    business = await _get_default_business(session)
     stmt = select(Product).where(Product.id == product_id, Product.business_id == business.id)
     product = (await session.execute(stmt)).scalar_one_or_none()
     if product is None:
@@ -571,9 +775,9 @@ async def dashboard_update_product(
 async def dashboard_delete_product(
     product_id: int,
     session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
 ):
     """DELETE /api/products/{id} — delete a product."""
-    business = await _get_default_business(session)
     stmt = select(Product).where(Product.id == product_id, Product.business_id == business.id)
     product = (await session.execute(stmt)).scalar_one_or_none()
     if product is None:
@@ -585,10 +789,12 @@ async def dashboard_delete_product(
 
 
 @app.get("/api/settings", response_model=SettingsResponse)
-async def dashboard_get_settings(session: AsyncSession = Depends(get_db)):
-    """GET /api/settings — return auto-reply settings for the default business.
+async def dashboard_get_settings(
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """GET /api/settings — return auto-reply settings for the authenticated business.
     Missing keys are filled from DEFAULT_SETTINGS so the dashboard always gets a complete shape."""
-    business = await _get_default_business(session)
     stored = business.settings or {}
     merged = {**DEFAULT_SETTINGS, **stored}
     return SettingsResponse(**merged)
@@ -598,9 +804,9 @@ async def dashboard_get_settings(session: AsyncSession = Depends(get_db)):
 async def dashboard_update_settings(
     body: SettingsUpdate,
     session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
 ):
     """PUT /api/settings — merge partial settings into Business.settings JSON."""
-    business = await _get_default_business(session)
     current = dict(business.settings or {})
 
     update_data = body.model_dump(exclude_unset=True, exclude_none=True)
