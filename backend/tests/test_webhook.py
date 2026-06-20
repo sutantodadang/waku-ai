@@ -1,7 +1,49 @@
 """Webhook routing: per-business send creds, unknown-tenant drop, order extraction."""
 import main
 from services.whatsapp import parse_statuses
-from helpers import register, connect_wa, customer_message, auth
+from helpers import register, connect_wa, customer_message, request_otp, deliver_otp_via_wa, auth
+
+
+def test_platform_number_doubling_as_tenant_routes_nonotp_to_ai(client, monkeypatch):
+    """A single test number set as PLATFORM but also connected to a business:
+    non-OTP customer messages must still get an AI reply."""
+    sent = []
+
+    async def fake_send(to, body, *, phone_number_id=None, access_token=None):
+        sent.append(to)
+        return {"ok": True}
+
+    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(main, "AI_SERVICE_URL", "http://127.0.0.1:9")
+
+    t = register(client, phone="081111111111")
+    connect_wa(client, t["access_token"], phone_number_id="PLATFORM_TEST", access_token="TKN_P")
+
+    wh = customer_message(client, "PLATFORM_TEST", "628777", "halo kak")
+    body = wh.json()
+    assert body["channel"] == "platform"
+    assert body["ai_handled"] == 1
+    assert sent == ["628777"]
+
+
+def test_platform_number_otp_not_sent_to_ai(client, monkeypatch):
+    """An OTP message on the platform number is consumed, never routed to AI."""
+    sent = []
+
+    async def fake_send(to, body, *, phone_number_id=None, access_token=None):
+        sent.append(to)
+        return {"ok": True}
+
+    monkeypatch.setattr(main, "send_message", fake_send)
+
+    t = register(client, phone="081111111111")
+    connect_wa(client, t["access_token"], phone_number_id="PLATFORM_TEST", access_token="TKN_P")
+    code = request_otp(client, "081111111111")
+    wh = deliver_otp_via_wa(client, "6281111111111", code)
+    body = wh.json()
+    assert body["otp_matched"] == 1
+    assert body["ai_handled"] == 0
+    assert sent == []  # OTP path sends nothing
 
 
 def test_delivery_status_callback_logged_not_a_message(client):
