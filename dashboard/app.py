@@ -1255,7 +1255,7 @@ def render_sidebar():
         if biz_name:
             st.caption(f"🏪 {biz_name}")
         if st.button("🚪 Keluar", use_container_width=True):
-            for k in ("token", "business_name", "otp_instructions", "otp_phone_saved", "otp_code"):
+            for k in ("token", "business_name", "otp_instructions", "otp_phone_saved", "otp_code", "otp_platform"):
                 st.session_state.pop(k, None)
             st.rerun()
 
@@ -1320,10 +1320,18 @@ def render_auth():
                 st.session_state["otp_phone_saved"] = otp_phone
                 st.session_state["otp_code"] = data["code"]
                 st.session_state["otp_instructions"] = data["instructions"]
+                st.session_state["otp_platform"] = data.get("platform_number")
                 st.rerun()
             except WakuAPIError as e:
                 show_error(e)
         if st.session_state.get("otp_instructions"):
+            plat = st.session_state.get("otp_platform")
+            code = st.session_state.get("otp_code", "")
+            if plat:
+                st.markdown("**Kirim kode ini:**")
+                st.code(code, language=None)
+                st.markdown("**Ke nomor WhatsApp Waku ini:**")
+                st.code(plat, language=None)
             st.info(st.session_state["otp_instructions"])
             if st.button("2) Saya Sudah Kirim — Verifikasi", type="primary", use_container_width=True):
                 try:
@@ -1335,6 +1343,7 @@ def render_auth():
                     st.session_state["business_name"] = data.get("business_name")
                     st.session_state.pop("otp_instructions", None)
                     st.session_state.pop("otp_code", None)
+                    st.session_state.pop("otp_platform", None)
                     st.rerun()
                 except WakuAPIError as e:
                     show_error(e)
