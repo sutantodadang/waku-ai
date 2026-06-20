@@ -42,6 +42,7 @@ class OTPRequestResponse(BaseModel):
     code: str
     expires_at: datetime.datetime
     instructions: str
+    platform_number: Optional[str] = None  # number the owner sends the code TO
 
 
 class OTPVerify(BaseModel):

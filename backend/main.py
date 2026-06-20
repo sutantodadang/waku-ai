@@ -82,6 +82,10 @@ logger = logging.getLogger("waku.backend")
 # ── AI service URL ──────────────────────────────────────────────────────────────
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
 
+# Human-readable display number of the platform WhatsApp (where owners send the
+# reverse-OTP code). Shown in the dashboard. e.g. "+1 555-648-9439".
+PLATFORM_WHATSAPP_NUMBER = os.getenv("PLATFORM_WHATSAPP_NUMBER", "")
+
 
 # ── Lifespan ────────────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -393,11 +397,13 @@ async def auth_otp_request(body: OTPRequest, session: AsyncSession = Depends(get
     otp = OTPVerification(phone_number=body.phone_number, code=code, purpose=body.purpose, expires_at=expires_at)
     session.add(otp)
     await session.flush()
+    target = PLATFORM_WHATSAPP_NUMBER or "(nomor platform belum di-set di server)"
     return OTPRequestResponse(
         code=code,
         expires_at=expires_at,
+        platform_number=PLATFORM_WHATSAPP_NUMBER or None,
         instructions=(
-            f"Kirim pesan berisi kode {code} dari WhatsApp Anda ke nomor Waku, "
+            f"Kirim pesan berisi kode {code} dari WhatsApp Anda ke nomor Waku {target}, "
             f"lalu klik Verifikasi. Kode berlaku {OTP_TTL_MINUTES} menit."
         ),
     )
