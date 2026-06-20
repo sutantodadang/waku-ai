@@ -45,57 +45,220 @@ def local_css():
     st.markdown(
         f"""
         <style>
+        /* ── #2 Font: Plus Jakarta Sans — warm, geometric, friendly; fits UMKM product ── */
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+        /* ── #7 Spacing system ── */
+        :root {{
+            --space-xs: 0.5rem;
+            --space-sm: 0.75rem;
+            --space-md: 1rem;
+            --space-lg: 1.5rem;
+            --space-xl: 2rem;
+            --radius: 16px;
+            --radius-sm: 12px;
+            --radius-pill: 50px;
+            --font-display: 'Plus Jakarta Sans', sans-serif;
+            --font-body: 'Plus Jakarta Sans', sans-serif;
+            --color-teal: {TEAL};
+            --color-teal-light: {TEAL_LIGHT};
+            --color-teal-dark: {TEAL_DARK};
+            --color-orange: {ORANGE};
+            --color-orange-light: {ORANGE_LIGHT};
+            --color-orange-bg: {ORANGE_BG};
+            --color-white: {WHITE};
+            --color-gray-bg: {GRAY_BG};
+            --color-gray-text: {GRAY_TEXT};
+            --color-green: {GREEN};
+            --color-red: {RED};
+        }}
+
+        /* ── #2 Apply fonts ── */
+        h1, h2, h3 {{
+            font-family: var(--font-display) !important;
+            font-weight: 700;
+        }}
+        body, p, span, div, input, textarea, select, label, button {{
+            font-family: var(--font-body) !important;
+        }}
+
+        /* ── #3 Hide ALL Streamlit chrome ── */
+        #MainMenu,
+        footer,
+        .stDeployButton,
+        header[data-testid="stHeader"],
+        [data-testid="stSidebar"] > div:first-child {{
+            visibility: hidden !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: hidden !important;
+        }}
+        [data-testid="stSidebar"] {{
+            display: none !important;
+        }}
+        [data-testid="stToolbar"] {{
+            display: none !important;
+        }}
+        .stApp {{
+            background-color: var(--color-gray-bg) !important;
+        }}
+        /* Remove default Streamlit padding that creates gaps */
+        .stApp > header {{
+            display: none !important;
+        }}
+        section[data-testid="stSidebar"] {{
+            display: none !important;
+        }}
+
+        /* ── #6 Layout: centered, intentional, not floating ── */
         .block-container {{
-            padding: 1rem 1rem 2rem 1rem;
+            padding: var(--space-md) var(--space-md) var(--space-xl) var(--space-md);
             max-width: 480px;
             margin: 0 auto;
+            min-height: calc(100vh - 80px);
         }}
         @media (min-width: 768px) {{
             .block-container {{
                 max-width: 900px;
+                padding: var(--space-lg) var(--space-xl) var(--space-xl) var(--space-xl);
             }}
         }}
-        .stApp {{
-            background-color: {GRAY_BG};
+        @media (max-width: 480px) {{
+            .block-container {{
+                padding: var(--space-sm) var(--space-sm) var(--space-xl) var(--space-sm);
+                max-width: 100%;
+            }}
         }}
-        h1, h2, h3 {{
-            font-family: 'Inter', -apple-system, sans-serif;
-            font-weight: 700;
+
+        /* ── #4 Restyle native Streamlit widgets globally ── */
+        /* Text inputs */
+        [data-testid="stTextInput"] input,
+        [data-testid="stTextArea"] textarea {{
+            font-family: var(--font-body) !important;
+            border-radius: var(--radius-sm) !important;
+            border: 1.5px solid #E0E0E0 !important;
+            padding: var(--space-sm) var(--space-md) !important;
+            transition: border-color 0.2s, box-shadow 0.2s;
         }}
+        [data-testid="stTextInput"] input:focus,
+        [data-testid="stTextArea"] textarea:focus {{
+            border-color: var(--color-orange) !important;
+            box-shadow: 0 0 0 3px rgba(255,109,0,0.15) !important;
+        }}
+        /* Select boxes */
+        [data-testid="stSelectbox"] div[data-baseweb="select"] {{
+            border-radius: var(--radius-sm) !important;
+        }}
+        [data-testid="stSelectbox"] [data-baseweb="select"] > div {{
+            border-radius: var(--radius-sm) !important;
+            border: 1.5px solid #E0E0E0 !important;
+        }}
+        [data-testid="stSelectbox"] [data-baseweb="select"]:hover > div {{
+            border-color: var(--color-orange) !important;
+        }}
+        /* Number inputs */
+        [data-testid="stNumberInput"] input {{
+            border-radius: var(--radius-sm) !important;
+            border: 1.5px solid #E0E0E0 !important;
+            font-family: var(--font-body) !important;
+        }}
+        [data-testid="stNumberInput"] input:focus {{
+            border-color: var(--color-orange) !important;
+            box-shadow: 0 0 0 3px rgba(255,109,0,0.15) !important;
+        }}
+        /* File uploader */
+        [data-testid="stFileUploader"] > section {{
+            border-radius: var(--radius-sm) !important;
+            border: 2px dashed #E0E0E0 !important;
+            background: {WHITE} !important;
+            transition: border-color 0.2s;
+        }}
+        [data-testid="stFileUploader"] > section:hover {{
+            border-color: var(--color-orange) !important;
+        }}
+        /* Toggle */
+        [data-testid="stToggleSwitch"] label {{
+            font-family: var(--font-body) !important;
+        }}
+        [data-testid="stToggleSwitch"] button {{
+            border-radius: var(--radius-pill) !important;
+        }}
+        [data-testid="stToggleSwitch"] button[kind="header"] {{
+            background-color: var(--color-orange) !important;
+        }}
+        /* Chat messages */
+        [data-testid="stChatMessage"] {{
+            border-radius: var(--radius-sm) !important;
+        }}
+        /* Forms */
+        [data-testid="stForm"] {{
+            border: none !important;
+            border-radius: var(--radius) !important;
+            background: {WHITE} !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+            padding: var(--space-lg) !important;
+        }}
+        /* Time input */
+        [data-testid="stTimeInput"] input {{
+            border-radius: var(--radius-sm) !important;
+            border: 1.5px solid #E0E0E0 !important;
+            font-family: var(--font-body) !important;
+        }}
+        /* Progress bar */
+        [data-testid="stProgress"] > div > div {{
+            background: linear-gradient(90deg, var(--color-teal), var(--color-orange)) !important;
+            border-radius: var(--radius-pill) !important;
+        }}
+        /* Info/success/error boxes */
+        [data-testid="stAlert"] {{
+            border-radius: var(--radius-sm) !important;
+            font-family: var(--font-body) !important;
+        }}
+        /* Expander */
+        .streamlit-expanderHeader {{
+            border-radius: var(--radius-sm) !important;
+            font-family: var(--font-body) !important;
+        }}
+
+        /* ── Cards (using spacing tokens) ── */
         .card {{
-            background: {WHITE};
-            border-radius: 16px;
-            padding: 1.2rem;
+            background: var(--color-white);
+            border-radius: var(--radius);
+            padding: var(--space-lg);
             box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-            margin-bottom: 1rem;
+            margin-bottom: var(--space-md);
             border: none;
         }}
         .card-teal {{
-            background: linear-gradient(135deg, {TEAL}, {TEAL_DARK});
+            background: linear-gradient(135deg, var(--color-teal), var(--color-teal-dark));
             color: white;
-            border-radius: 16px;
-            padding: 1.2rem;
+            border-radius: var(--radius);
+            padding: var(--space-lg);
             box-shadow: 0 2px 12px rgba(0,128,128,0.25);
-            margin-bottom: 1rem;
+            margin-bottom: var(--space-md);
         }}
         .card-orange {{
-            background: linear-gradient(135deg, {ORANGE}, {ORANGE_BG});
+            background: linear-gradient(135deg, var(--color-orange), var(--color-orange-bg));
             color: white;
-            border-radius: 16px;
-            padding: 1.2rem;
+            border-radius: var(--radius);
+            padding: var(--space-lg);
             box-shadow: 0 2px 12px rgba(255,109,0,0.25);
-            margin-bottom: 1rem;
+            margin-bottom: var(--space-md);
         }}
         .card-green {{
-            background: linear-gradient(135deg, {GREEN}, #1B5E20);
+            background: linear-gradient(135deg, var(--color-green), #1B5E20);
             color: white;
-            border-radius: 16px;
-            padding: 1.2rem;
+            border-radius: var(--radius);
+            padding: var(--space-lg);
             box-shadow: 0 2px 12px rgba(46,125,50,0.25);
-            margin-bottom: 1rem;
+            margin-bottom: var(--space-md);
         }}
+
+        /* ── Stats ── */
         .stat-number {{
-            font-size: 2rem;
+            font-size: var(--space-xl);
             font-weight: 800;
             line-height: 1.2;
             margin: 0;
@@ -105,10 +268,12 @@ def local_css():
             opacity: 0.9;
             margin: 0;
         }}
+
+        /* ── Badges ── */
         .badge {{
             display: inline-block;
-            padding: 0.2rem 0.7rem;
-            border-radius: 50px;
+            padding: var(--space-xs) var(--space-sm);
+            border-radius: var(--radius-pill);
             font-size: 0.75rem;
             font-weight: 600;
         }}
@@ -116,29 +281,39 @@ def local_css():
         .badge-diproses {{ background: #FFF3E0; color: #E65100; }}
         .badge-selesai {{ background: #E8F5E9; color: #2E7D32; }}
         .badge-dibatalkan {{ background: #FFEBEE; color: #C62828; }}
+
+        /* ── Buttons (using spacing tokens) ── */
         .stButton > button {{
-            border-radius: 50px;
+            border-radius: var(--radius-pill);
             font-weight: 600;
             font-size: 0.95rem;
-            padding: 0.5rem 1.5rem;
+            padding: var(--space-sm) var(--space-lg);
             border: none;
             width: 100%;
+            font-family: var(--font-body) !important;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }}
+        .stButton > button:hover {{
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
         }}
         .stButton > button[kind="primary"] {{
-            background: {ORANGE};
+            background: var(--color-orange);
             color: white;
         }}
         .stButton > button[kind="secondary"] {{
-            background: {TEAL};
+            background: var(--color-teal);
             color: white;
         }}
+
+        /* ── Product cards (using spacing tokens) ── */
         .product-card {{
             background: white;
-            border-radius: 16px;
+            border-radius: var(--radius);
             padding: 0;
             overflow: hidden;
             box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-            margin-bottom: 1rem;
+            margin-bottom: var(--space-md);
             transition: transform 0.2s;
         }}
         .product-card:hover {{
@@ -148,103 +323,160 @@ def local_css():
             width: 100%;
             height: 160px;
             object-fit: cover;
-            background: {TEAL_LIGHT};
+            background: var(--color-teal-light);
         }}
         .product-info {{
-            padding: 0.8rem 1rem;
+            padding: var(--space-sm) var(--space-md);
         }}
         .product-name {{
             font-weight: 700;
             font-size: 1rem;
-            margin: 0 0 0.2rem 0;
+            margin: 0 0 var(--space-xs) 0;
         }}
         .product-price {{
             font-weight: 700;
-            color: {ORANGE};
+            color: var(--color-orange);
             font-size: 1.1rem;
-            margin: 0 0 0.4rem 0;
+            margin: 0 0 var(--space-xs) 0;
         }}
         .product-desc {{
             font-size: 0.8rem;
-            color: {GRAY_TEXT};
+            color: var(--color-gray-text);
             margin: 0;
             display: -webkit-box;
             -webkit-line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
         }}
+
+        /* ── Wizard (using spacing tokens) ── */
         .wizard-step {{
             background: white;
-            border-radius: 16px;
-            padding: 2rem;
+            border-radius: var(--radius);
+            padding: var(--space-xl);
             text-align: center;
         }}
         .wizard-icon {{
             font-size: 3rem;
-            margin-bottom: 1rem;
+            margin-bottom: var(--space-md);
         }}
+
+        /* ── Welcome header (using spacing tokens) ── */
         .welcome-header {{
             text-align: center;
-            padding: 1rem 0;
+            padding: var(--space-md) 0;
         }}
         .welcome-title {{
             font-size: 1.5rem;
             font-weight: 800;
-            margin-bottom: 0.3rem;
+            margin-bottom: var(--space-xs);
         }}
         .welcome-subtitle {{
-            color: {GRAY_TEXT};
+            color: var(--color-gray-text);
             font-size: 0.9rem;
         }}
+
+        /* ── #5 Bottom navigation — real mobile nav bar via styled st.buttons ── */
+        /* The 5 nav buttons are rendered in st.columns at the bottom.
+           We style them as a fixed bottom-nav bar with icon + label. */
+
+        /* Target the bottom block container that holds the nav buttons */
+        div[data-testid="stBottomBlockContainer"] {{
+            position: fixed !important;
+            bottom: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            z-index: 999 !important;
+            background: white !important;
+            border-top: 1px solid #E0E0E0 !important;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.06) !important;
+            padding: var(--space-xs) var(--space-sm) !important;
+            padding-bottom: max(var(--space-xs), env(safe-area-inset-bottom)) !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+        }}
+        @media (min-width: 768px) {{
+            div[data-testid="stBottomBlockContainer"] {{
+                max-width: 900px !important;
+                left: 50% !important;
+                transform: translateX(-50%) !important;
+            }}
+        }}
+
+        /* Style each nav button as a nav item */
+        div[data-testid="stBottomBlockContainer"] .stButton > button {{
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 0.1rem !important;
+            padding: var(--space-xs) 0 !important;
+            border-radius: var(--radius-sm) !important;
+            font-size: 1.3rem !important;
+            line-height: 1 !important;
+            min-height: 48px !important;
+            background: transparent !important;
+            color: var(--color-gray-text) !important;
+            box-shadow: none !important;
+            border: none !important;
+            transition: color 0.2s, background 0.2s !important;
+        }}
+        div[data-testid="stBottomBlockContainer"] .stButton > button:hover {{
+            background: var(--color-gray-bg) !important;
+            color: var(--color-orange) !important;
+            transform: none !important;
+            box-shadow: none !important;
+        }}
+        /* Active (primary) button — orange */
+        div[data-testid="stBottomBlockContainer"] .stButton > button[kind="primary"] {{
+            background: transparent !important;
+            color: var(--color-orange) !important;
+            font-weight: 700 !important;
+        }}
+
+        /* Add label text below each icon via ::after pseudo-element.
+           Buttons are in order: Beranda, Pesanan, Katalog, Auto-Balas, Panduan */
+        div[data-testid="stBottomBlockContainer"] .stButton:nth-of-type(1) > button::after {{ content: "Beranda"; }}
+        div[data-testid="stBottomBlockContainer"] .stButton:nth-of-type(2) > button::after {{ content: "Pesanan"; }}
+        div[data-testid="stBottomBlockContainer"] .stButton:nth-of-type(3) > button::after {{ content: "Katalog"; }}
+        div[data-testid="stBottomBlockContainer"] .stButton:nth-of-type(4) > button::after {{ content: "Auto-Balas"; }}
+        div[data-testid="stBottomBlockContainer"] .stButton:nth-of-type(5) > button::after {{ content: "Panduan"; }}
+
+        div[data-testid="stBottomBlockContainer"] .stButton > button::after {{
+            font-size: 0.65rem !important;
+            font-family: var(--font-body) !important;
+            line-height: 1.2 !important;
+            display: block !important;
+        }}
+
+        /* Remove the old footer-nav styles (no longer used as HTML nav) */
         .footer-nav {{
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: white;
-            border-top: 1px solid #E0E0E0;
-            padding: 0.5rem;
-            z-index: 999;
-            display: flex;
-            justify-content: space-around;
+            display: none !important;
         }}
-        .footer-nav a {{
-            text-align: center;
-            font-size: 0.7rem;
-            color: {GRAY_TEXT};
-            text-decoration: none;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 0.2rem;
-        }}
-        .footer-nav a.active {{
-            color: {ORANGE};
-            font-weight: 600;
-        }}
-        .footer-nav .nav-icon {{
-            font-size: 1.4rem;
-        }}
-        /* Hide default Streamlit elements */
-        #MainMenu {{visibility: hidden;}}
-        footer {{visibility: hidden;}}
-        .stDeployButton {{display: none;}}
-        /* Make toggle switches bigger */
+
+        /* ── Toggle switches — bigger, brand-colored ── */
         .stCheckbox {{
             transform: scale(1.3);
         }}
-        /* Better spacing on mobile */
+
+        /* ── Selectbox spacing ── */
         .row-widget.stSelectbox > div {{
-            margin-bottom: 0.5rem;
+            margin-bottom: var(--space-xs);
         }}
-        /* Success message */
+
+        /* ── Success message (using spacing tokens) ── */
         .success-msg {{
             background: #E8F5E9;
-            color: {GREEN};
-            padding: 1rem;
-            border-radius: 12px;
+            color: var(--color-green);
+            padding: var(--space-md);
+            border-radius: var(--radius-sm);
             text-align: center;
             font-weight: 600;
+        }}
+
+        /* ── Bottom padding so content isn't hidden behind nav ── */
+        .stApp {{
+            padding-bottom: 80px !important;
         }}
         </style>
         """,
@@ -299,20 +531,20 @@ PAGES = {
 
 
 def render_bottom_nav():
-    """Render navigasi bawah (mobile-style)."""
+    """Render navigasi bawah (mobile-style) — icon above label, proper flexbox nav."""
     current = st.session_state.get("page", "home")
     cols = st.columns(5)
     for i, (label, info) in enumerate(PAGES.items()):
         with cols[i]:
             active = info["page"] == current
-            style = "active" if active else ""
             icon = info["icon"]
+            # Button with icon only; label added via CSS ::after
             click = st.button(
-                f"{icon}\n{label}",
+                icon,
                 key=f"nav_{info['page']}",
                 help=label,
                 use_container_width=True,
-                type="secondary" if not active else "primary",
+                type="primary" if active else "secondary",
             )
             if click:
                 st.session_state["page"] = info["page"]

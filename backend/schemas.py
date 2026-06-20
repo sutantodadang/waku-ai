@@ -78,3 +78,90 @@ class MessageResponse(BaseModel):
     timestamp: datetime.datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Product ─────────────────────────────────────────────────────────────────────
+class ProductCreate(BaseModel):
+    """POST /api/products body."""
+    name: str = Field(..., min_length=1, max_length=255)
+    price: float = Field(..., ge=0)
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+class ProductUpdate(BaseModel):
+    """PUT /api/products/{id} body — all fields optional."""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    price: Optional[float] = Field(None, ge=0)
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+class ProductResponse(BaseModel):
+    id: int
+    business_id: int
+    name: str
+    price: float
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+    created_at: datetime.datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Settings (auto-reply) ───────────────────────────────────────────────────────
+class FAQItem(BaseModel):
+    question: str = ""
+    answer: str = ""
+
+
+class BusinessHours(BaseModel):
+    open: str = "08:00"
+    close: str = "21:00"
+
+
+class SettingsUpdate(BaseModel):
+    """PUT /api/settings body — all fields optional."""
+    auto_reply_enabled: Optional[bool] = None
+    greeting_message: Optional[str] = None
+    after_hours_message: Optional[str] = None
+    business_hours: Optional[BusinessHours] = None
+    faq: Optional[list[FAQItem]] = None
+
+
+class SettingsResponse(BaseModel):
+    auto_reply_enabled: bool = True
+    greeting_message: str = ""
+    after_hours_message: str = ""
+    business_hours: BusinessHours = Field(default_factory=BusinessHours)
+    faq: list[FAQItem] = Field(default_factory=list)
+
+
+# ── Order status update + dashboard order shape ────────────────────────────────
+class OrderStatusUpdate(BaseModel):
+    """PATCH /api/orders/{id} body — dashboard sends Indonesian status."""
+    status: str  # baru | diproses | selesai | dibatalkan
+
+
+class OrderDashboardResponse(BaseModel):
+    """Order shape expected by the Streamlit dashboard."""
+    id: int
+    customer_name: str
+    status: str  # Indonesian label
+    total: float
+    items: list[Any]
+    created_at: datetime.datetime
+
+
+class DashboardSummary(BaseModel):
+    """GET /api/dashboard/summary shape expected by the dashboard."""
+    orders_today: int
+    revenue_today: float
+    messages_handled: int
+    pending_orders: int
+    top_products: list[dict]
+
+
+class UploadResponse(BaseModel):
+    """POST /api/upload response."""
+    url: str

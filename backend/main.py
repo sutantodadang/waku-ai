@@ -7,23 +7,33 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import close_db, get_db, init_db
-from models import Business, Customer, Order, Product
+from models import Business, Customer, Message, Order, Product
 from schemas import (
     BusinessRegister,
     BusinessResponse,
+    DashboardSummary,
     DailySummary,
+    OrderDashboardResponse,
     OrderResponse,
+    OrderStatusUpdate,
+    ProductCreate,
+    ProductResponse,
+    ProductUpdate,
+    SettingsResponse,
+    SettingsUpdate,
+    UploadResponse,
     WhatsAppWebhookPayload,
 )
 from services.whatsapp import (
@@ -80,6 +90,51 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+DASHBOARD_TO_DB_STATUS = {
+    "baru": "pending",
+    "diproses": "confirmed",
+    "selesai": "completed",
+    "dibatalkan": "cancelled",
+}
+DB_TO_DASHBOARD_STATUS = {v: k for k, v in DASHBOARD_TO_DB_STATUS.items()}
+
+DEFAULT_SETTINGS: dict = {
+    "auto_reply_enabled": True,
+    "greeting_message": "",
+    "after_hours_message": "",
+    "business_hours": {"open": "08:00", "close": "21:00"},
+    "faq": [],
+}
+
+
+async def _get_default_business(session: AsyncSession) -> Business:
+    """Resolve the default business for dashboard-facing endpoints.
+    The dashboard has no business_id concept — it manages the first registered business."""
+    stmt = select(Business).order_by(Business.id.asc()).limit(1)
+    result = await session.execute(stmt)
+    business = result.scalar_one_or_none()
+    if business is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No business registered yet. Complete onboarding in the dashboard first.",
+        )
+    return business
+
+
+def _order_to_dashboard_dict(order: Order, customer_name: str) -> dict:
+    return {
+        "id": order.id,
+        "customer_name": customer_name,
+        "status": DB_TO_DASHBOARD_STATUS.get(order.status, order.status),
+        "total": order.total,
+        "items": order.items or [],
+        "created_at": order.created_at,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -339,6 +394,245 @@ async def business_summary(
     target_date = date.fromisoformat(day) if day else date.today()
     summary = await get_daily_summary(session, business_id, day=target_date)
     return summary
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DASHBOARD API — endpoints consumed by the Streamlit dashboard.
+#  These operate on the default (first registered) business, since the
+#  dashboard has no multi-tenant / business_id concept.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/dashboard/summary", response_model=DashboardSummary)
+async def dashboard_summary(session: AsyncSession = Depends(get_db)):
+    """GET /api/dashboard/summary — daily stats shaped for the dashboard home page."""
+    business = await _get_default_business(session)
+    today = date.today()
+    day_start = datetime.combine(today, datetime.min.time())
+    day_end = datetime.combine(today, datetime.max.time())
+
+    orders_today_stmt = (
+        select(Order)
+        .where(
+            Order.business_id == business.id,
+            Order.created_at >= day_start,
+            Order.created_at <= day_end,
+        )
+        .order_by(Order.created_at.desc())
+    )
+    orders_today = list((await session.execute(orders_today_stmt)).scalars().all())
+
+    revenue_today = sum(o.total for o in orders_today)
+
+    messages_handled_stmt = (
+        select(func.count(Message.id))
+        .where(
+            Message.business_id == business.id,
+            Message.direction == "outbound",
+            Message.timestamp >= day_start,
+            Message.timestamp <= day_end,
+        )
+    )
+    messages_handled = (await session.execute(messages_handled_stmt)).scalar() or 0
+
+    pending_stmt = (
+        select(func.count(Order.id))
+        .where(
+            Order.business_id == business.id,
+            Order.status.in_(["pending", "confirmed"]),
+        )
+    )
+    pending_orders = (await session.execute(pending_stmt)).scalar() or 0
+
+    product_counts: dict[str, dict] = {}
+    for o in orders_today:
+        for item in (o.items or []):
+            name = (item.get("name") or "").strip().lower()
+            if not name:
+                continue
+            qty = int(item.get("quantity") or item.get("qty") or 1)
+            entry = product_counts.setdefault(name, {"name": item.get("name", name), "count": 0})
+            entry["count"] += qty
+    top_products = sorted(product_counts.values(), key=lambda x: x["count"], reverse=True)[:5]
+
+    return DashboardSummary(
+        orders_today=len(orders_today),
+        revenue_today=revenue_today,
+        messages_handled=messages_handled,
+        pending_orders=pending_orders,
+        top_products=top_products,
+    )
+
+
+@app.get("/api/orders", response_model=list[OrderDashboardResponse])
+async def dashboard_list_orders(
+    status: Optional[str] = Query(None, description="Filter: baru|diproses|selesai|dibatalkan"),
+    session: AsyncSession = Depends(get_db),
+):
+    """GET /api/orders — list orders for the default business, newest first."""
+    business = await _get_default_business(session)
+
+    stmt = (
+        select(Order, Customer)
+        .join(Customer, Order.customer_id == Customer.id)
+        .where(Order.business_id == business.id)
+        .order_by(Order.created_at.desc())
+    )
+    if status and status in DASHBOARD_TO_DB_STATUS:
+        stmt = stmt.where(Order.status == DASHBOARD_TO_DB_STATUS[status])
+
+    rows = (await session.execute(stmt)).all()
+    return [_order_to_dashboard_dict(order, customer.name or customer.phone_number) for order, customer in rows]
+
+
+@app.patch("/api/orders/{order_id}", response_model=OrderDashboardResponse)
+async def dashboard_update_order_status(
+    order_id: int,
+    body: OrderStatusUpdate,
+    session: AsyncSession = Depends(get_db),
+):
+    """PATCH /api/orders/{id} — update order status. Accepts Indonesian status labels."""
+    business = await _get_default_business(session)
+
+    db_status = DASHBOARD_TO_DB_STATUS.get(body.status)
+    if db_status is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid status '{body.status}'. Expected one of: {', '.join(DASHBOARD_TO_DB_STATUS.keys())}",
+        )
+
+    stmt = (
+        select(Order, Customer)
+        .join(Customer, Order.customer_id == Customer.id)
+        .where(Order.id == order_id, Order.business_id == business.id)
+    )
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Order not found for this business.")
+    order, customer = row
+
+    order.status = db_status
+    await session.flush()
+    return _order_to_dashboard_dict(order, customer.name or customer.phone_number)
+
+
+@app.get("/api/products", response_model=list[ProductResponse])
+async def dashboard_list_products(session: AsyncSession = Depends(get_db)):
+    """GET /api/products — list all products for the default business."""
+    business = await _get_default_business(session)
+    stmt = (
+        select(Product)
+        .where(Product.business_id == business.id)
+        .order_by(Product.created_at.desc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+@app.post("/api/products", response_model=ProductResponse, status_code=201)
+async def dashboard_create_product(
+    body: ProductCreate,
+    session: AsyncSession = Depends(get_db),
+):
+    """POST /api/products — create a product for the default business."""
+    business = await _get_default_business(session)
+    product = Product(
+        business_id=business.id,
+        name=body.name,
+        price=body.price,
+        description=body.description,
+        image_url=body.image_url,
+    )
+    session.add(product)
+    await session.flush()
+    logger.info("Product #%d '%s' created for business %d", product.id, product.name, business.id)
+    return product
+
+
+@app.put("/api/products/{product_id}", response_model=ProductResponse)
+async def dashboard_update_product(
+    product_id: int,
+    body: ProductUpdate,
+    session: AsyncSession = Depends(get_db),
+):
+    """PUT /api/products/{id} — update a product (partial update)."""
+    business = await _get_default_business(session)
+    stmt = select(Product).where(Product.id == product_id, Product.business_id == business.id)
+    product = (await session.execute(stmt)).scalar_one_or_none()
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found for this business.")
+
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(product, field, value)
+    await session.flush()
+    return product
+
+
+@app.delete("/api/products/{product_id}")
+async def dashboard_delete_product(
+    product_id: int,
+    session: AsyncSession = Depends(get_db),
+):
+    """DELETE /api/products/{id} — delete a product."""
+    business = await _get_default_business(session)
+    stmt = select(Product).where(Product.id == product_id, Product.business_id == business.id)
+    product = (await session.execute(stmt)).scalar_one_or_none()
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found for this business.")
+
+    await session.delete(product)
+    await session.flush()
+    return {"status": "ok", "deleted": product_id}
+
+
+@app.get("/api/settings", response_model=SettingsResponse)
+async def dashboard_get_settings(session: AsyncSession = Depends(get_db)):
+    """GET /api/settings — return auto-reply settings for the default business.
+    Missing keys are filled from DEFAULT_SETTINGS so the dashboard always gets a complete shape."""
+    business = await _get_default_business(session)
+    stored = business.settings or {}
+    merged = {**DEFAULT_SETTINGS, **stored}
+    return SettingsResponse(**merged)
+
+
+@app.put("/api/settings", response_model=SettingsResponse)
+async def dashboard_update_settings(
+    body: SettingsUpdate,
+    session: AsyncSession = Depends(get_db),
+):
+    """PUT /api/settings — merge partial settings into Business.settings JSON."""
+    business = await _get_default_business(session)
+    current = dict(business.settings or {})
+
+    update_data = body.model_dump(exclude_unset=True, exclude_none=True)
+    if "business_hours" in update_data and isinstance(update_data["business_hours"], dict):
+        bh = update_data["business_hours"]
+        current_bh = current.get("business_hours", {})
+        current["business_hours"] = {**current_bh, **bh}
+        update_data.pop("business_hours")
+    if "faq" in update_data:
+        current["faq"] = [f.model_dump() if hasattr(f, "model_dump") else f for f in body.faq]
+        update_data.pop("faq")
+
+    current.update(update_data)
+    business.settings = current
+    await session.flush()
+    return SettingsResponse(**{**DEFAULT_SETTINGS, **current})
+
+
+@app.post("/api/upload", response_model=UploadResponse)
+async def dashboard_upload_image(file: UploadFile = File(...)):
+    """POST /api/upload — save an image to uploads/ and return its public URL."""
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=422, detail="Only image files are accepted.")
+
+    suffix = os.path.splitext(file.filename or "")[1] or ".jpg"
+    safe_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}{suffix}"
+    dest = os.path.join(UPLOAD_DIR, safe_name)
+    content = await file.read()
+    with open(dest, "wb") as f:
+        f.write(content)
+
+    return UploadResponse(url=f"/uploads/{safe_name}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
