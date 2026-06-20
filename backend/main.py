@@ -30,6 +30,7 @@ from auth import (
 from database import async_session_factory, close_db, get_db, init_db
 from models import Business, Customer, Message, OTPVerification, Order, Product, User
 from schemas import (
+    BusinessProfileUpdate,
     BusinessRegister,
     BusinessResponse,
     ConnectWhatsApp,
@@ -598,6 +599,18 @@ async def register_business(body: BusinessRegister, session: AsyncSession = Depe
     session.add(business)
     await session.flush()
     logger.info("Business #%d '%s' registered.", business.id, business.business_name)
+    return business
+
+
+@app.patch("/api/business", response_model=BusinessResponse)
+async def update_business_profile(
+    body: BusinessProfileUpdate,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """PATCH /api/business — rename the authenticated owner's business."""
+    business.business_name = body.business_name
+    await session.flush()
     return business
 
 

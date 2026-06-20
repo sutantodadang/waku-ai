@@ -924,6 +924,25 @@ def page_settings():
 
     api = get_api_client()
 
+    # ── Profil bisnis (ganti nama) ──
+    with st.expander("🏪 Profil Bisnis", expanded=False):
+        new_name = st.text_input(
+            "Nama Bisnis",
+            value=st.session_state.get("business_name", "") or "",
+            key="biz_name_edit",
+        )
+        if st.button("💾 Simpan Nama", key="save_biz_name", use_container_width=True):
+            if new_name.strip():
+                try:
+                    data = api.update_business(new_name.strip())
+                    st.session_state["business_name"] = data.get("business_name", new_name.strip())
+                    show_success("Nama bisnis diperbarui!")
+                    st.rerun()
+                except WakuAPIError as e:
+                    show_error(e)
+            else:
+                st.error("Nama bisnis tidak boleh kosong.")
+
     # Ambil pengaturan
     try:
         settings = api.get_settings()
