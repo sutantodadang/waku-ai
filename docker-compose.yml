@@ -18,10 +18,13 @@ services:
       - "8001:8001"
 
   dashboard:
-    build: ./dashboard
+    build:
+      context: ./dashboard
+      args:
+        # Public URL of the backend, baked into the SPA at build time.
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
     ports:
       - "8501:8501"
-    env_file: .env
     depends_on:
       - backend
 

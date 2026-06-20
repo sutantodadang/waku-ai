@@ -199,64 +199,77 @@ async def webhook_post(request: Request):
 
     phone_number_id = extract_phone_number_id(payload)
 
-    # ── System channel: our own platform number (reverse-OTP). Never call the LLM. ──
-    if phone_number_id and PLATFORM_PHONE_NUMBER_ID and phone_number_id == PLATFORM_PHONE_NUMBER_ID:
-        matched = 0
-        async with async_session_factory() as session:
-            for msg in incoming_messages:
-                if await _handle_platform_message(session, msg.get("from_number", ""), msg.get("text", "")):
-                    matched += 1
-            await session.commit()
-        return {"status": "ok", "channel": "platform", "otp_matched": matched}
-
-    # ── Tenant channel: resolve the business by phone_number_id (no fallback). ──
     async with async_session_factory() as session:
         business = await _resolve_business(session, phone_number_id)
+        is_platform = bool(phone_number_id and PLATFORM_PHONE_NUMBER_ID and phone_number_id == PLATFORM_PHONE_NUMBER_ID)
+
+        # ── Platform channel: reverse-OTP first; OTP messages never hit the LLM. ──
+        if is_platform:
+            otp_matched = 0
+            leftover: list[dict] = []
+            for msg in incoming_messages:
+                if await _handle_platform_message(session, msg.get("from_number", ""), msg.get("text", "")):
+                    otp_matched += 1
+                else:
+                    leftover.append(msg)
+            # Non-OTP messages fall through to AI only if a business is connected to
+            # this number (e.g. one test number doubling as platform + tenant).
+            if business is not None and leftover:
+                await _process_tenant_messages(session, business, leftover)
+            await session.commit()
+            return {
+                "status": "ok", "channel": "platform",
+                "otp_matched": otp_matched,
+                "ai_handled": len(leftover) if business is not None else 0,
+            }
+
+        # ── Tenant channel: resolve by phone_number_id (no fallback). ──
         if business is None:
             logger.warning("No business registered for phone_number_id=%s — ignoring.", phone_number_id)
             return {"status": "ok", "messages_processed": 0, "reason": "unknown_business"}
-
-        for msg in incoming_messages:
-            from_number: str = msg.get("from_number", "")
-            text: str = msg.get("text", "")
-            message_id: str = msg.get("message_id", "")
-            if not from_number or not text:
-                continue
-
-            logger.info("Processing message from %s for business %d: %.80s", from_number, business.id, text)
-            try:
-                customer = await get_or_create_customer(session, business.id, from_number)
-                await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
-
-                order_items = extract_order_from_message(text)
-                if order_items:
-                    order = await create_order(session, business.id, customer.id, order_items)
-                    logger.info("Order #%d auto-extracted from message.", order.id)
-
-                reply = await _generate_ai_reply(
-                    session, business, customer.phone_number, text, order_items or None
-                )
-
-                await send_message(
-                    from_number, reply,
-                    phone_number_id=business.phone_number_id,
-                    access_token=business.access_token,
-                )
-                await save_message(session, business.id, customer.id, reply, "outbound")
-            except Exception as exc:
-                logger.exception("Error processing message from %s: %s", from_number, exc)
-                try:
-                    await send_message(
-                        from_number, "Maaf, terjadi kesalahan. Silakan coba lagi nanti.",
-                        phone_number_id=business.phone_number_id,
-                        access_token=business.access_token,
-                    )
-                except Exception:
-                    logger.error("Failed to send error reply to %s", from_number)
-
+        await _process_tenant_messages(session, business, incoming_messages)
         await session.commit()
 
     return {"status": "ok", "messages_processed": len(incoming_messages)}
+
+
+async def _process_tenant_messages(session: AsyncSession, business: Business, messages: list[dict]) -> None:
+    """Persist + AI-reply + send for each customer message of a business."""
+    for msg in messages:
+        from_number = msg.get("from_number", "")
+        text = msg.get("text", "")
+        message_id = msg.get("message_id", "")
+        if not from_number or not text:
+            continue
+
+        logger.info("Processing message from %s for business %d: %.80s", from_number, business.id, text)
+        try:
+            customer = await get_or_create_customer(session, business.id, from_number)
+            await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
+
+            order_items = extract_order_from_message(text)
+            if order_items:
+                order = await create_order(session, business.id, customer.id, order_items)
+                logger.info("Order #%d auto-extracted from message.", order.id)
+
+            reply = await _generate_ai_reply(session, business, customer.phone_number, text, order_items or None)
+
+            await send_message(
+                from_number, reply,
+                phone_number_id=business.phone_number_id,
+                access_token=business.access_token,
+            )
+            await save_message(session, business.id, customer.id, reply, "outbound")
+        except Exception as exc:
+            logger.exception("Error processing message from %s: %s", from_number, exc)
+            try:
+                await send_message(
+                    from_number, "Maaf, terjadi kesalahan. Silakan coba lagi nanti.",
+                    phone_number_id=business.phone_number_id,
+                    access_token=business.access_token,
+                )
+            except Exception:
+                logger.error("Failed to send error reply to %s", from_number)
 
 
 def _normalize_phone(phone: str) -> str:
