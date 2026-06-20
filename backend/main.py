@@ -56,6 +56,7 @@ from schemas import (
 from services.whatsapp import (
     PLATFORM_PHONE_NUMBER_ID,
     extract_phone_number_id,
+    parse_statuses,
     parse_whatsapp_message,
     send_message,
     verify_signature,
@@ -184,8 +185,16 @@ async def webhook_post(request: Request):
     payload: dict = await request.json()
     incoming_messages = parse_whatsapp_message(payload)
     if not incoming_messages:
-        logger.info("No messages in webhook payload — returning 200 OK.")
-        return {"status": "ok", "messages_processed": 0}
+        # Likely a delivery-status callback — log it so send failures are visible.
+        statuses = parse_statuses(payload)
+        for s in statuses:
+            if s.get("errors"):
+                logger.warning("WhatsApp delivery %s → %s — ERROR %s", s["status"], s["recipient_id"], s["errors"])
+            else:
+                logger.info("WhatsApp delivery %s → %s", s["status"], s["recipient_id"])
+        if not statuses:
+            logger.info("No messages in webhook payload — returning 200 OK.")
+        return {"status": "ok", "messages_processed": 0, "statuses": len(statuses)}
 
     phone_number_id = extract_phone_number_id(payload)
 
