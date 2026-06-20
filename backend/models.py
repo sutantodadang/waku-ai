@@ -6,20 +6,56 @@ from __future__ import annotations
 import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from crypto import EncryptedString
 from database import Base
+
+
+class User(Base):
+    """Dashboard account — the UMKM owner who logs in. One owner per business (MVP)."""
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))  # null when OTP-only account
+    business_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("businesses.id"))
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+
+
+class OTPVerification(Base):
+    """Short-lived reverse-OTP code. Owner sends `code` from their WhatsApp to the
+    platform number; the webhook matches it to verify number ownership / login."""
+    __tablename__ = "otp_verifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    phone_number: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(12), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(16), default="login")  # login | connect
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
 
 
 class Business(Base):
     __tablename__ = "businesses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Human-readable display number (e.g. 0812...). NOT used for webhook routing.
     phone_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
     business_name: Mapped[str] = mapped_column(String(255), nullable=False)
     settings: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)
+    # ── Multi-tenant WhatsApp connection (set by Embedded Signup) ──
+    phone_number_id: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True)  # Meta routing id
+    waba_id: Mapped[Optional[str]] = mapped_column(String(64))
+    access_token: Mapped[Optional[str]] = mapped_column(EncryptedString(512))  # encrypted at rest
+    is_connected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

@@ -496,12 +496,12 @@ def fmt_rp(amount: float) -> str:
 
 
 def get_api_client() -> WakuAPIClient:
-    """Dapatkan instance API client — pakai backend URL dari session state atau default."""
+    """Dapatkan instance API client — pakai backend URL + JWT dari session state."""
     url = st.session_state.get("backend_url", "")
     if not url:
         from api_client import DEFAULT_BACKEND_URL
         url = DEFAULT_BACKEND_URL
-    return WakuAPIClient(url)
+    return WakuAPIClient(url, token=st.session_state.get("token"))
 
 
 def show_error(err: WakuAPIError):
@@ -1200,19 +1200,10 @@ def page_onboarding():
             unsafe_allow_html=True,
         )
 
-        # Simpan ke backend
-        biz_name = st.session_state.get("biz_name", "Bisnis Saya")
-        biz_phone = st.session_state.get("biz_phone", "")
-
-        try:
-            api = get_api_client()
-            api.register_business({
-                "name": biz_name,
-                "phone": biz_phone,
-            })
-            st.success(f"✅ **{biz_name}** berhasil didaftarkan!")
-        except WakuAPIError:
-            st.info(f"Data bisnis **{biz_name}** siap digunakan secara lokal.")
+        # Bisnis sudah dibuat saat pendaftaran akun — wizard ini hanya panduan.
+        biz_name = st.session_state.get("business_name") or st.session_state.get("biz_name", "Bisnis Saya")
+        st.success(f"✅ **{biz_name}** siap digunakan!")
+        st.caption("Langkah penting berikutnya: hubungkan nomor WhatsApp lewat panel **📲 Koneksi WhatsApp** di atas.")
 
         st.markdown(
             """
@@ -1260,8 +1251,131 @@ def render_sidebar():
             st.rerun()
 
         st.markdown("---")
+        biz_name = st.session_state.get("business_name")
+        if biz_name:
+            st.caption(f"🏪 {biz_name}")
+        if st.button("🚪 Keluar", use_container_width=True):
+            for k in ("token", "business_name", "otp_instructions", "otp_phone_saved", "otp_code"):
+                st.session_state.pop(k, None)
+            st.rerun()
+
+        st.markdown("---")
         st.caption("Waku v1.0 — 🤖 Asisten WhatsApp UMKM")
         st.caption("Made with ❤️ untuk pengusaha Indonesia")
+
+
+# ---------------------------------------------------------------------------
+# AUTH GATE — login / daftar / OTP WhatsApp
+# ---------------------------------------------------------------------------
+
+def render_auth():
+    """Layar masuk sebelum dashboard. Email+password (utama) atau reverse-OTP WhatsApp."""
+    st.markdown(
+        '<div class="welcome-header">'
+        '<div class="welcome-title">Waku 🤖</div>'
+        '<div class="welcome-subtitle">Masuk untuk mengelola asisten WhatsApp Anda</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    tab_login, tab_register, tab_otp = st.tabs(["🔑 Masuk", "✨ Daftar", "💬 OTP WhatsApp"])
+
+    with tab_login:
+        with st.form("login_form"):
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            if st.form_submit_button("Masuk", type="primary", use_container_width=True):
+                try:
+                    data = get_api_client().login(email, password)
+                    st.session_state["token"] = data["access_token"]
+                    st.session_state["business_name"] = data.get("business_name")
+                    st.rerun()
+                except WakuAPIError as e:
+                    show_error(e)
+
+    with tab_register:
+        with st.form("register_form"):
+            biz = st.text_input("Nama Bisnis", placeholder="Contoh: Warung Makmur")
+            phone = st.text_input("Nomor WhatsApp", placeholder="Contoh: 081234567890")
+            email = st.text_input("Email", key="reg_email")
+            password = st.text_input("Password (min. 6 karakter)", type="password", key="reg_pass")
+            if st.form_submit_button("Daftar", type="primary", use_container_width=True):
+                if not all([biz, phone, email, password]):
+                    st.error("Semua kolom wajib diisi.")
+                else:
+                    try:
+                        data = get_api_client().register(email, password, biz, phone)
+                        st.session_state["token"] = data["access_token"]
+                        st.session_state["business_name"] = data.get("business_name")
+                        st.rerun()
+                    except WakuAPIError as e:
+                        show_error(e)
+
+    with tab_otp:
+        st.caption("Login lewat WhatsApp (gratis). Minta kode, kirim dari WA Anda ke nomor Waku, lalu verifikasi.")
+        otp_phone = st.text_input("Nomor WhatsApp Anda", key="otp_phone_input", placeholder="081234567890")
+        if st.button("1) Minta Kode", use_container_width=True):
+            try:
+                data = get_api_client().otp_request(otp_phone, "login")
+                st.session_state["otp_phone_saved"] = otp_phone
+                st.session_state["otp_code"] = data["code"]
+                st.session_state["otp_instructions"] = data["instructions"]
+                st.rerun()
+            except WakuAPIError as e:
+                show_error(e)
+        if st.session_state.get("otp_instructions"):
+            st.info(st.session_state["otp_instructions"])
+            if st.button("2) Saya Sudah Kirim — Verifikasi", type="primary", use_container_width=True):
+                try:
+                    data = get_api_client().otp_verify(
+                        st.session_state.get("otp_phone_saved", ""),
+                        st.session_state.get("otp_code", ""),
+                    )
+                    st.session_state["token"] = data["access_token"]
+                    st.session_state["business_name"] = data.get("business_name")
+                    st.session_state.pop("otp_instructions", None)
+                    st.session_state.pop("otp_code", None)
+                    st.rerun()
+                except WakuAPIError as e:
+                    show_error(e)
+
+
+def render_whatsapp_panel():
+    """Panel status koneksi WhatsApp + form connect manual (sebelum Embedded Signup aktif)."""
+    with st.expander("📲 Koneksi WhatsApp", expanded=False):
+        try:
+            status = get_api_client().whatsapp_status()
+        except WakuAPIError as e:
+            show_error(e)
+            return
+
+        if status.get("is_connected"):
+            st.markdown(
+                f'<div class="success-msg">✅ Terhubung — phone_number_id: '
+                f'{status.get("phone_number_id", "-")}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.warning("Belum terhubung. Nomor WhatsApp bisnis belum bisa membalas pelanggan.")
+
+        st.caption(
+            "Nanti via **Embedded Signup** Meta (sekali klik) setelah akun lolos App Review. "
+            "Untuk sekarang (test), masukkan kredensial Cloud API manual:"
+        )
+        with st.form("connect_wa_form"):
+            pnid = st.text_input("Phone Number ID", placeholder="dari Meta WhatsApp API Setup")
+            token = st.text_input("Access Token", type="password", placeholder="token Cloud API")
+            waba = st.text_input("WABA ID (opsional)")
+            if st.form_submit_button("🔗 Hubungkan", type="primary", use_container_width=True):
+                if not pnid or not token:
+                    st.error("Phone Number ID dan Access Token wajib diisi.")
+                else:
+                    try:
+                        get_api_client().connect_whatsapp(pnid, token, waba)
+                        show_success("WhatsApp berhasil dihubungkan! 🎉")
+                        st.rerun()
+                    except WakuAPIError as e:
+                        show_error(e)
 
 
 # ---------------------------------------------------------------------------
@@ -1271,6 +1385,8 @@ def render_sidebar():
 def main():
     """Entry point aplikasi."""
     # Init session state
+    if "token" not in st.session_state:
+        st.session_state["token"] = None
     if "page" not in st.session_state:
         st.session_state["page"] = "home"
     if "wizard_step" not in st.session_state:
@@ -1281,8 +1397,16 @@ def main():
     # Inject CSS
     local_css()
 
+    # Auth gate — show login screen until authenticated.
+    if not st.session_state.get("token"):
+        render_auth()
+        return
+
     # Render sidebar
     render_sidebar()
+
+    # WhatsApp connection panel (always visible at top)
+    render_whatsapp_panel()
 
     # Render page
     page_map = {

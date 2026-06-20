@@ -26,9 +26,115 @@ class WakuAPIError(Exception):
 class WakuAPIClient:
     """Klien HTTP sederhana untuk backend Waku."""
 
-    def __init__(self, base_url: str = DEFAULT_BACKEND_URL):
+    def __init__(self, base_url: str = DEFAULT_BACKEND_URL, token: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
-        self.client = httpx.Client(timeout=30.0)
+        self.token = token
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        # Default headers attach the JWT to every request automatically.
+        self.client = httpx.Client(timeout=30.0, headers=headers)
+
+    # ----------------------------------------------------------------
+    # Autentikasi
+    # ----------------------------------------------------------------
+    def register(self, email: str, password: str, business_name: str, phone_number: str) -> dict:
+        """Daftar pemilik + buat bisnis sekaligus. Mengembalikan token + business_id."""
+        try:
+            resp = self.client.post(
+                f"{self.base_url}/api/auth/register",
+                json={"email": email, "password": password,
+                      "business_name": business_name, "phone_number": phone_number},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            detail = ""
+            try:
+                detail = e.response.json().get("detail", "")
+            except Exception:
+                pass
+            raise WakuAPIError("Gagal mendaftar.", detail or f"Server merespon {e.response.status_code}")
+        except httpx.RequestError:
+            raise WakuAPIError("Tidak bisa terhubung ke server Waku.", "Periksa apakah backend sudah berjalan.")
+
+    def login(self, email: str, password: str) -> dict:
+        """Login email + password. Mengembalikan token + business_id."""
+        try:
+            resp = self.client.post(
+                f"{self.base_url}/api/auth/login",
+                json={"email": email, "password": password},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise WakuAPIError("Email atau password salah.", f"Server merespon {e.response.status_code}")
+        except httpx.RequestError:
+            raise WakuAPIError("Tidak bisa terhubung ke server Waku.", "Periksa apakah backend sudah berjalan.")
+
+    def otp_request(self, phone_number: str, purpose: str = "login") -> dict:
+        """Minta kode reverse-OTP. Mengembalikan kode + instruksi."""
+        try:
+            resp = self.client.post(
+                f"{self.base_url}/api/auth/otp/request",
+                json={"phone_number": phone_number, "purpose": purpose},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise WakuAPIError("Gagal membuat kode OTP.", f"Server merespon {e.response.status_code}")
+        except httpx.RequestError:
+            raise WakuAPIError("Tidak bisa terhubung ke server Waku.", "Periksa apakah backend sudah berjalan.")
+
+    def otp_verify(self, phone_number: str, code: str) -> dict:
+        """Verifikasi reverse-OTP setelah kode dikirim dari WhatsApp. Mengembalikan token."""
+        try:
+            resp = self.client.post(
+                f"{self.base_url}/api/auth/otp/verify",
+                json={"phone_number": phone_number, "code": code},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            detail = ""
+            try:
+                detail = e.response.json().get("detail", "")
+            except Exception:
+                pass
+            raise WakuAPIError("Verifikasi gagal.", detail or f"Server merespon {e.response.status_code}")
+        except httpx.RequestError:
+            raise WakuAPIError("Tidak bisa terhubung ke server Waku.", "Periksa apakah backend sudah berjalan.")
+
+    # ----------------------------------------------------------------
+    # Koneksi WhatsApp
+    # ----------------------------------------------------------------
+    def whatsapp_status(self) -> dict:
+        """Status koneksi WhatsApp bisnis."""
+        try:
+            resp = self.client.get(f"{self.base_url}/api/whatsapp/status")
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise WakuAPIError("Gagal mengambil status WhatsApp.", f"Server merespon {e.response.status_code}")
+        except httpx.RequestError:
+            raise WakuAPIError("Tidak bisa terhubung ke server Waku.", "Periksa apakah backend sudah berjalan.")
+
+    def connect_whatsapp(self, phone_number_id: str, access_token: str, waba_id: str = "") -> dict:
+        """Hubungkan kredensial WhatsApp Cloud API ke bisnis (manual / test)."""
+        try:
+            resp = self.client.put(
+                f"{self.base_url}/api/whatsapp/connect",
+                json={"phone_number_id": phone_number_id, "access_token": access_token, "waba_id": waba_id or None},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            detail = ""
+            try:
+                detail = e.response.json().get("detail", "")
+            except Exception:
+                pass
+            raise WakuAPIError("Gagal menghubungkan WhatsApp.", detail or f"Server merespon {e.response.status_code}")
+        except httpx.RequestError:
+            raise WakuAPIError("Tidak bisa terhubung ke server Waku.", "Periksa apakah backend sudah berjalan.")
 
     # ----------------------------------------------------------------
     # Ringkasan Harian
