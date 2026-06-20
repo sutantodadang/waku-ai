@@ -47,3 +47,21 @@ def test_unauthenticated_dashboard_rejected(client):
 
 def test_invalid_token_rejected(client):
     assert client.get("/api/products", headers=auth("garbage.token.value")).status_code == 401
+
+
+def test_rename_business(client):
+    t = register(client, business_name="Old Name")
+    r = client.patch("/api/business", headers=auth(t["access_token"]), json={"business_name": "New Name"})
+    assert r.status_code == 200
+    assert r.json()["business_name"] == "New Name"
+    assert client.patch("/api/business", json={"business_name": "X"}).status_code == 401  # unauth
+
+
+def test_register_rejects_reserved_synthetic_namespace(client):
+    # The wa-...@waku.local namespace is reserved for passwordless OTP accounts;
+    # registering into it (to squat a victim's phone) must be rejected.
+    r = client.post("/api/auth/register", json={
+        "email": "wa-6281242046113@waku.local", "password": "secret1",
+        "business_name": "Squat", "phone_number": "081242046113",
+    })
+    assert r.status_code == 422

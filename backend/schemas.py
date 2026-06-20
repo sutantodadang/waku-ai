@@ -75,6 +75,11 @@ class BusinessRegister(BaseModel):
     settings: Optional[dict] = None
 
 
+class BusinessProfileUpdate(BaseModel):
+    """PATCH /api/business — rename the authenticated business."""
+    business_name: str = Field(..., min_length=1, max_length=255)
+
+
 class BusinessResponse(BaseModel):
     id: int
     phone_number: str

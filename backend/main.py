@@ -30,6 +30,7 @@ from auth import (
 from database import async_session_factory, close_db, get_db, init_db
 from models import Business, Customer, Message, OTPVerification, Order, Product, User
 from schemas import (
+    BusinessProfileUpdate,
     BusinessRegister,
     BusinessResponse,
     ConnectWhatsApp,
@@ -360,6 +361,9 @@ OTP_TTL_MINUTES = 10
 @app.post("/api/auth/register", response_model=TokenResponse)
 async def auth_register(body: UserRegister, session: AsyncSession = Depends(get_db)):
     """Register an owner + create their business in one step. Returns a JWT."""
+    # Reserve the synthetic passwordless namespace so it cannot be squatted.
+    if body.email.lower().endswith("@waku.local"):
+        raise HTTPException(status_code=422, detail="Domain email @waku.local tidak diizinkan.")
     existing = (await session.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=409, detail="Email sudah terdaftar.")
@@ -423,7 +427,11 @@ async def auth_otp_verify(body: OTPVerify, session: AsyncSession = Depends(get_d
     """Confirm a reverse-OTP. The supplied code must (a) match a record that was
     received from the owner's WhatsApp (consumed by the webhook), (b) still be
     within its expiry, and (c) match the given phone. Single-use: the record is
-    deleted on success so a verified code cannot be replayed for another JWT."""
+    deleted on success so a verified code cannot be replayed for another JWT.
+
+    Auto-signup: if no account exists for this verified phone, a passwordless
+    account (synthetic email, placeholder business name) is provisioned — making
+    reverse-OTP a full WhatsApp-native signup + login path."""
     norm = _normalize_phone(body.phone_number)
     now = datetime.utcnow()
     stmt = (
@@ -446,10 +454,26 @@ async def auth_otp_verify(body: OTPVerify, session: AsyncSession = Depends(get_d
     businesses = (await session.execute(select(Business))).scalars().all()
     business = next((b for b in businesses if _normalize_phone(b.phone_number) == norm), None)
     if business is None:
-        raise HTTPException(status_code=404, detail="Nomor ini belum terhubung ke bisnis mana pun.")
+        # OTP auto-signup — provision a passwordless account for this verified phone.
+        business = Business(
+            phone_number=body.phone_number,
+            business_name=f"Bisnis {body.phone_number}",  # placeholder; owner can rename
+            settings={},
+        )
+        session.add(business)
+        await session.flush()
+        logger.info("OTP auto-signup: created business #%d for %s.", business.id, body.phone_number)
+
+    # Resolve the owner via the authoritative business_id link — NEVER by the
+    # (guessable) synthetic email, which would let a squatted row be reassigned.
     user = (await session.execute(select(User).where(User.business_id == business.id))).scalar_one_or_none()
     if user is None:
-        raise HTTPException(status_code=404, detail="Akun untuk bisnis ini belum ada.")
+        # Passwordless WhatsApp account. Email carries a random suffix so it is
+        # not guessable and cannot collide with a pre-registered squat.
+        synthetic_email = f"wa-{norm}-{secrets.token_hex(8)}@waku.local"
+        user = User(email=synthetic_email, password_hash=None, business_id=business.id)
+        session.add(user)
+        await session.flush()
 
     # Single-use: spend the OTP so it cannot be replayed.
     await session.delete(matched)
@@ -575,6 +599,18 @@ async def register_business(body: BusinessRegister, session: AsyncSession = Depe
     session.add(business)
     await session.flush()
     logger.info("Business #%d '%s' registered.", business.id, business.business_name)
+    return business
+
+
+@app.patch("/api/business", response_model=BusinessResponse)
+async def update_business_profile(
+    body: BusinessProfileUpdate,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """PATCH /api/business — rename the authenticated owner's business."""
+    business.business_name = body.business_name
+    await session.flush()
     return business
 
 

@@ -342,6 +342,23 @@ class WakuAPIClient:
             )
 
     # ----------------------------------------------------------------
+    # Profil Bisnis
+    # ----------------------------------------------------------------
+    def update_business(self, business_name: str) -> dict:
+        """Ganti nama bisnis."""
+        try:
+            resp = self.client.patch(
+                f"{self.base_url}/api/business",
+                json={"business_name": business_name},
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPStatusError as e:
+            raise WakuAPIError("Gagal mengganti nama bisnis.", f"Server merespon {e.response.status_code}")
+        except httpx.RequestError:
+            raise WakuAPIError("Tidak bisa terhubung ke server Waku.", "Periksa apakah backend sudah berjalan.")
+
+    # ----------------------------------------------------------------
     # Onboarding / Registrasi Bisnis
     # ----------------------------------------------------------------
     def register_business(self, data: dict) -> dict:
