@@ -1,6 +1,32 @@
 """Webhook routing: per-business send creds, unknown-tenant drop, order extraction."""
 import main
+from services.whatsapp import parse_statuses
 from helpers import register, connect_wa, customer_message, auth
+
+
+def test_delivery_status_callback_logged_not_a_message(client):
+    payload = {"entry": [{"changes": [{"value": {
+        "messaging_product": "whatsapp",
+        "metadata": {"phone_number_id": "X"},
+        "statuses": [{"status": "failed", "recipient_id": "628",
+                      "errors": [{"code": 131030, "title": "Recipient not in allowed list"}]}],
+    }}]}]}
+    r = client.post("/webhook", json=payload)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["statuses"] == 1 and body["messages_processed"] == 0
+
+
+def test_parse_statuses_extracts_error_code():
+    payload = {"entry": [{"changes": [{"value": {"statuses": [
+        {"status": "failed", "recipient_id": "628",
+         "errors": [{"code": 131030, "title": "Bad", "error_data": {"details": "not allowed"}}]},
+    ]}}]}]}
+    out = parse_statuses(payload)
+    assert len(out) == 1
+    assert out[0]["status"] == "failed"
+    assert out[0]["errors"][0]["code"] == 131030
+    assert out[0]["errors"][0]["detail"] == "not allowed"
 
 
 def test_unknown_business_ignored(client):

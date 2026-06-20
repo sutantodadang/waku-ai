@@ -193,6 +193,33 @@ async def send_template_message(
 
 
 # ── Utility ─────────────────────────────────────────────────────────────────────
+def parse_statuses(payload: dict) -> list[dict]:
+    """
+    Extract delivery-status callbacks (sent / delivered / read / failed) from a
+    Meta webhook payload, including any error code+detail on failure.
+    """
+    out: list[dict] = []
+    try:
+        for entry in payload.get("entry", []):
+            for change in entry.get("changes", []):
+                for st in change.get("value", {}).get("statuses", []):
+                    out.append({
+                        "status": st.get("status"),
+                        "recipient_id": st.get("recipient_id"),
+                        "errors": [
+                            {
+                                "code": e.get("code"),
+                                "title": e.get("title"),
+                                "detail": (e.get("error_data") or {}).get("details"),
+                            }
+                            for e in st.get("errors", [])
+                        ],
+                    })
+    except Exception as exc:
+        logger.error("Failed to parse statuses: %s", exc)
+    return out
+
+
 def parse_whatsapp_message(payload: dict) -> list[dict]:
     """
     Extract inbound messages from a Meta webhook payload.
