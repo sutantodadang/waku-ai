@@ -273,3 +273,8 @@ class CustomerUpdate(BaseModel):
 class UploadResponse(BaseModel):
     """POST /api/upload response."""
     url: str
+
+
+class SendPaymentResponse(BaseModel):
+    """POST /api/orders/{id}/send-payment response."""
+    sent: bool

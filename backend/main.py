@@ -52,6 +52,7 @@ from schemas import (
     SettingsResponse,
     SettingsUpdate,
     TokenResponse,
+    SendPaymentResponse,
     UploadResponse,
     UserLogin,
     UserRegister,
@@ -83,6 +84,7 @@ from services.order_service import (
 )
 from services.embeddings import embed_product
 from services.retrieval import select_relevant_products
+from services.payment import send_payment_info
 
 load_dotenv()
 
@@ -316,6 +318,18 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
                     except Exception:
                         logger.exception("recompute failed")
 
+            # On-demand payment: customer asked how to pay → send payment info.
+            if any(kw in text.lower() for kw in (
+                "cara bayar", "gimana bayar", "bayar gimana",
+                "pembayaran", "no rekening", "nomor rekening",
+            )):
+                _order = await find_amendable_order(session, business.id, customer.id)
+                _total = _order.total if _order else 0.0
+                try:
+                    await send_payment_info(session, business, customer, _total)
+                except Exception:
+                    logger.exception("On-demand payment send failed")
+
             reply = f"{reply}{AI_REPLY_FOOTER}"
 
             await send_message(
@@ -374,8 +388,14 @@ async def _persist_ai_order(session, business, customer, ai_order: dict) -> None
 
 
 async def _maybe_send_payment(session, business, customer) -> None:
-    """Placeholder — Task 10 implements payment auto-send."""
-    return
+    """Auto-send payment for the customer's latest amendable order, best-effort."""
+    order = await find_amendable_order(session, business.id, customer.id)
+    if order is None:
+        return
+    try:
+        await send_payment_info(session, business, customer, order.total)
+    except Exception:
+        logger.exception("Auto payment send failed for customer %d", customer.id)
 
 
 async def _resolve_business(session: AsyncSession, phone_number_id: Optional[str]) -> Optional[Business]:
@@ -888,6 +908,25 @@ async def dashboard_update_order_status(
     except Exception:
         logger.exception("Failed to recompute stats for customer %d", order.customer_id)
     return _order_to_dashboard_dict(order, customer.name or customer.phone_number)
+
+
+@app.post("/api/orders/{order_id}/send-payment", response_model=SendPaymentResponse)
+async def send_order_payment(
+    order_id: int,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """Owner re-sends payment info for an order to its customer."""
+    row = (await session.execute(
+        select(Order, Customer)
+        .join(Customer, Order.customer_id == Customer.id)
+        .where(Order.id == order_id, Order.business_id == business.id)
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Order not found for this business.")
+    order, customer = row
+    sent = await send_payment_info(session, business, customer, order.total)
+    return SendPaymentResponse(sent=sent)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
