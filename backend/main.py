@@ -52,6 +52,7 @@ from schemas import (
     SettingsResponse,
     SettingsUpdate,
     TokenResponse,
+    SendPaymentResponse,
     UploadResponse,
     UserLogin,
     UserRegister,
@@ -68,17 +69,23 @@ from services.whatsapp import (
     subscribe_app_to_waba,
     verify_signature,
     verify_webhook as verify_webhook_token,
+    within_service_window,
 )
 from services.order_service import (
     create_order,
     extract_order_from_message,
+    find_amendable_order,
     get_daily_summary,
     get_or_create_customer,
     get_orders_for_business,
     is_regular,
     recompute_customer_stats,
     save_message,
+    update_order_items,
 )
+from services.embeddings import embed_product
+from services.retrieval import select_relevant_products
+from services.payment import send_payment_info
 
 load_dotenv()
 
@@ -93,6 +100,9 @@ logger = logging.getLogger("waku.backend")
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
 # Shared secret sent to the AI service (X-Waku-Secret). Must match AI_SERVICE_SECRET there.
 AI_SERVICE_SECRET = os.getenv("AI_SERVICE_SECRET", "")
+
+# When True, fall back to regex-based order extraction if the AI service is unreachable.
+_AI_FALLBACK_ORDER_REGEX = True
 
 # Human-readable display number of the platform WhatsApp (where owners send the
 # reverse-OTP code). Shown in the dashboard. e.g. "+1 555-648-9439".
@@ -141,6 +151,12 @@ DASHBOARD_TO_DB_STATUS = {
     "dibatalkan": "cancelled",
 }
 DB_TO_DASHBOARD_STATUS = {v: k for k, v in DASHBOARD_TO_DB_STATUS.items()}
+
+STATUS_WA_MESSAGE = {
+    "confirmed": "Pesanan kakak lagi disiapkan ya 🙏",
+    "completed": "Pesanan kakak sudah selesai! Terima kasih 😊",
+    "cancelled": "Mohon maaf, pesanan kakak dibatalkan.",
+}
 
 DEFAULT_SETTINGS: dict = {
     "auto_reply_enabled": True,
@@ -287,20 +303,40 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
             customer = await get_or_create_customer(session, business.id, from_number)
             await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
 
-            products = (
-                await session.execute(select(Product).where(Product.business_id == business.id))
-            ).scalars().all()
-            known_products = {p.name: p.price for p in products}
-            order_items = extract_order_from_message(text, known_products or None)
-            if order_items:
-                order = await create_order(session, business.id, customer.id, order_items)
-                logger.info("Order #%d auto-extracted from message.", order.id)
-                try:
-                    await recompute_customer_stats(session, customer.id)
-                except Exception:
-                    logger.exception("Failed to recompute stats for customer %d", customer.id)
+            reply, ai_order, ai_ok = await _generate_ai_reply(
+                session, business, customer.phone_number, text, customer=customer
+            )
 
-            reply = await _generate_ai_reply(session, business, customer.phone_number, text, order_items or None, customer=customer)
+            if ai_order and ai_order.get("status") == "closed":
+                await _persist_ai_order(session, business, customer, ai_order)
+                # Auto-send payment after the order is finalised (Task 10 wires this).
+                await _maybe_send_payment(session, business, customer)
+            elif (not ai_ok) and _AI_FALLBACK_ORDER_REGEX:
+                # AI unreachable → degraded regex fallback so orders aren't lost.
+                products = (await session.execute(
+                    select(Product).where(Product.business_id == business.id)
+                )).scalars().all()
+                known = {p.name: p.price for p in products}
+                regex_items = extract_order_from_message(text, known or None)
+                if regex_items:
+                    await create_order(session, business.id, customer.id, regex_items)
+                    try:
+                        await recompute_customer_stats(session, customer.id)
+                    except Exception:
+                        logger.exception("recompute failed")
+
+            # On-demand payment: customer asked how to pay → send payment info.
+            if any(kw in text.lower() for kw in (
+                "cara bayar", "gimana bayar", "bayar gimana",
+                "pembayaran", "no rekening", "nomor rekening",
+            )):
+                _order = await find_amendable_order(session, business.id, customer.id)
+                _total = _order.total if _order else 0.0
+                try:
+                    await send_payment_info(session, business, customer, _total)
+                except Exception:
+                    logger.exception("On-demand payment send failed")
+
             reply = f"{reply}{AI_REPLY_FOOTER}"
 
             await send_message(
@@ -328,6 +364,45 @@ def _normalize_phone(phone: str) -> str:
     if digits.startswith("0"):
         digits = "62" + digits[1:]
     return digits
+
+
+def _normalize_ai_items(ai_items: list[dict]) -> list[dict]:
+    """AI items use `qty`; backend orders use `quantity`."""
+    out = []
+    for it in ai_items or []:
+        out.append({
+            "name": it.get("name", ""),
+            "quantity": int(it.get("qty") or it.get("quantity") or 1),
+            "price": it.get("price"),
+        })
+    return [it for it in out if it["name"]]
+
+
+async def _persist_ai_order(session, business, customer, ai_order: dict) -> None:
+    """Update the customer's amendable order or create a new one from the AI order."""
+    items = _normalize_ai_items(ai_order.get("items", []))
+    if not items:
+        return
+    existing = await find_amendable_order(session, business.id, customer.id)
+    if existing is not None:
+        await update_order_items(session, existing, items)
+    else:
+        await create_order(session, business.id, customer.id, items)
+    try:
+        await recompute_customer_stats(session, customer.id)
+    except Exception:
+        logger.exception("Failed to recompute stats for customer %d", customer.id)
+
+
+async def _maybe_send_payment(session, business, customer) -> None:
+    """Auto-send payment for the customer's latest amendable order, best-effort."""
+    order = await find_amendable_order(session, business.id, customer.id)
+    if order is None:
+        return
+    try:
+        await send_payment_info(session, business, customer, order.total)
+    except Exception:
+        logger.exception("Auto payment send failed for customer %d", customer.id)
 
 
 async def _resolve_business(session: AsyncSession, phone_number_id: Optional[str]) -> Optional[Business]:
@@ -375,18 +450,17 @@ async def _generate_ai_reply(
     business: Business,
     session_id: str,
     message_text: str,
-    extracted_order: Optional[list[dict]] = None,
     customer: Optional[Customer] = None,
-) -> str:
+) -> tuple[str, Optional[dict], bool]:
     """
     Forward the message to the AI service (/ai/reply), scoped to this business's
     catalog + context. Falls back to a sensible Indonesian reply when the AI
     service is unreachable.
+    Returns (reply_text, ai_order, ai_ok) where:
+      - ai_order is the order dict from the AI response (or None when the AI did not close an order)
+      - ai_ok is True when the AI service responded successfully, False when unreachable/errored
     """
-    products = (
-        await session.execute(select(Product).where(Product.business_id == business.id))
-    ).scalars().all()
-    catalog = [{"name": p.name, "price": p.price, "stock": True} for p in products]
+    catalog = await select_relevant_products(session, business.id, message_text, k=12)
 
     payload: dict[str, Any] = {
         "incoming_message": message_text,
@@ -405,28 +479,25 @@ async def _generate_ai_reply(
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(f"{AI_SERVICE_URL}/ai/reply", json=payload, headers=headers)
             resp.raise_for_status()
-            reply = resp.json().get("reply", "")
+            data = resp.json()
+            reply = data.get("reply", "")
+            ai_order = data.get("order")
             if reply:
-                return reply
+                return reply, ai_order, True
     except httpx.RequestError as exc:
         logger.warning("AI service unreachable (%s) — using fallback reply.", exc)
     except Exception as exc:
         logger.exception("AI service error: %s", exc)
 
-    # Fallback replies in Indonesian
-    if extracted_order:
-        items_desc = ", ".join(f"{it.get('quantity', 1)}x {it.get('name', '?')}" for it in extracted_order)
-        return (
-            f"Terima kasih atas pesanannya! 🎉\n\n"
-            f"Saya sudah mencatat pesanan Anda:\n{items_desc}\n\n"
-            f"Pesanan akan segera diproses. Apakah ada yang ingin ditambahkan?"
-        )
+    # Fallback reply in Indonesian — AI service was unreachable
     return (
         "Halo! 👋 Saya asisten Waku untuk UMKM.\n\n"
         "Saya bisa bantu mencatat pesanan Anda. Cukup ketik pesanan seperti:\n"
         "• \"beli 2 nasi goreng, 1 es teh\"\n"
         "• \"saya mau pesan 3 ayam geprek\"\n\n"
-        "Ada yang bisa saya bantu?"
+        "Ada yang bisa saya bantu?",
+        None,
+        False,
     )
 
 
@@ -672,6 +743,14 @@ async def register_business(body: BusinessRegister, session: AsyncSession = Depe
     return business
 
 
+@app.get("/api/business", response_model=BusinessResponse)
+async def get_business_profile(
+    business: Business = Depends(get_current_business),
+):
+    """GET /api/business — the authenticated owner's business profile."""
+    return business
+
+
 @app.patch("/api/business", response_model=BusinessResponse)
 async def update_business_profile(
     body: BusinessProfileUpdate,
@@ -680,6 +759,10 @@ async def update_business_profile(
 ):
     """PATCH /api/business — rename the authenticated owner's business."""
     business.business_name = body.business_name
+    if body.payment_methods is not None:
+        business.payment_methods = [m.model_dump() for m in body.payment_methods]
+    if body.qris_image_url is not None:
+        business.qris_image_url = body.qris_image_url or None
     await session.flush()
     return business
 
@@ -839,7 +922,37 @@ async def dashboard_update_order_status(
         await recompute_customer_stats(session, order.customer_id)
     except Exception:
         logger.exception("Failed to recompute stats for customer %d", order.customer_id)
+
+    msg = STATUS_WA_MESSAGE.get(db_status)
+    if msg and await within_service_window(session, customer.id):
+        try:
+            await send_message(
+                customer.phone_number, msg,
+                phone_number_id=business.phone_number_id, access_token=business.access_token,
+            )
+        except Exception:
+            logger.exception("Status notification failed for order %d", order.id)
+
     return _order_to_dashboard_dict(order, customer.name or customer.phone_number)
+
+
+@app.post("/api/orders/{order_id}/send-payment", response_model=SendPaymentResponse)
+async def send_order_payment(
+    order_id: int,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """Owner re-sends payment info for an order to its customer."""
+    row = (await session.execute(
+        select(Order, Customer)
+        .join(Customer, Order.customer_id == Customer.id)
+        .where(Order.id == order_id, Order.business_id == business.id)
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Order not found for this business.")
+    order, customer = row
+    sent = await send_payment_info(session, business, customer, order.total)
+    return SendPaymentResponse(sent=sent)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -969,6 +1082,7 @@ async def dashboard_create_product(
     )
     session.add(product)
     await session.flush()
+    await embed_product(session, product)
     logger.info("Product #%d '%s' created for business %d", product.id, product.name, business.id)
     return product
 
@@ -990,6 +1104,7 @@ async def dashboard_update_product(
     for field, value in update_data.items():
         setattr(product, field, value)
     await session.flush()
+    await embed_product(session, product)
     return product
 
 

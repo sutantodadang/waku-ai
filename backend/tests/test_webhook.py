@@ -100,11 +100,16 @@ def test_tenant_message_uses_per_business_credentials(client, monkeypatch):
 
 
 def test_order_auto_extracted_from_message(client, monkeypatch):
+    """AI closes an order → exactly one order is persisted."""
     async def fake_send(*a, **k):
         return {"ok": True}
 
     monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "AI_SERVICE_URL", "http://127.0.0.1:9")
+
+    async def fake_reply(session, business, sid, text, customer=None):
+        order = {"items": [{"name": "nasi goreng", "qty": 2, "price": None}, {"name": "es teh", "qty": 1, "price": None}], "total": 0, "status": "closed"}
+        return ("ok", order, True)
+    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
@@ -115,12 +120,22 @@ def test_order_auto_extracted_from_message(client, monkeypatch):
 
 
 def test_offcatalog_item_creates_no_order(client, monkeypatch):
-    """With a catalog, an item that isn't in it must not become a phantom order."""
+    """AI returns no closed order for off-catalog items; closed order creates exactly one."""
     async def fake_send(*a, **k):
         return {"ok": True}
 
     monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "AI_SERVICE_URL", "http://127.0.0.1:9")
+
+    replies = iter([
+        ("ok", None, True),  # off-catalog message → AI does not close an order
+        ("ok", {"items": [{"name": "Nasi Goreng", "qty": 2, "price": 14000}], "total": 28000, "status": "closed"}, True),
+    ])
+
+    async def fake_reply(session, business, sid, text, customer=None):
+        return next(replies)
+    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    # Disable regex fallback so off-catalog text cannot sneak through.
+    monkeypatch.setattr(main, "_AI_FALLBACK_ORDER_REGEX", False)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
@@ -130,7 +145,7 @@ def test_offcatalog_item_creates_no_order(client, monkeypatch):
     customer_message(client, "PNID_T", "628123", "aku mau pesan 1 motor")
     assert client.get("/api/orders", headers=auth(t["access_token"])).json() == []
 
-    # Real catalog item → one order with the real total.
+    # Real catalog item (AI closes) → one order with the real total.
     customer_message(client, "PNID_T", "628123", "pesan 2 nasi goreng")
     orders = client.get("/api/orders", headers=auth(t["access_token"])).json()
     assert len(orders) == 1
@@ -138,11 +153,16 @@ def test_offcatalog_item_creates_no_order(client, monkeypatch):
 
 
 def test_order_updates_customer_stats(client, monkeypatch):
+    """AI close-order triggers stats recompute; customer reflects one order."""
     async def fake_send(*a, **k):
         return {"ok": True}
 
     monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "AI_SERVICE_URL", "http://127.0.0.1:9")
+
+    async def fake_reply(session, business, sid, text, customer=None):
+        order = {"items": [{"name": "Nasi Goreng", "qty": 2, "price": 14000}], "total": 28000, "status": "closed"}
+        return ("ok", order, True)
+    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")

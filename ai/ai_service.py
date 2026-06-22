@@ -69,6 +69,7 @@ class ReplyResponse(BaseModel):
     intent: str = Field(default="UNKNOWN", description="Detected intent")
     session_id: str = Field(default="default")
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+    order: Optional[dict] = Field(default=None, description="Finalised order on close; null otherwise")
 
 
 class ExtractOrderRequest(BaseModel):
@@ -90,6 +91,14 @@ class SummarizeRequest(BaseModel):
 class CatalogSearchRequest(BaseModel):
     query: str = Field(..., description="Search query")
     catalog: list[dict] = Field(..., description="Product catalog to search in")
+
+
+class EmbedRequest(BaseModel):
+    texts: list[str] = Field(..., description="Texts to embed")
+
+
+class EmbedResponse(BaseModel):
+    vectors: list[list[float]] = Field(default_factory=list)
 
 
 # ──────────────────────────────────────────────
@@ -135,10 +144,13 @@ async def ai_reply(request: ReplyRequest):
             catalog_names = [item.get("name", "") for item in request.catalog]
         analysis = analyze_message(request.incoming_message, catalog_items=catalog_names)
 
+        conv = conversation_manager.get(request.session_id)
+        closed = conv.closed_order if conv else None
         return ReplyResponse(
             reply=reply,
             intent=analysis["intent"],
             session_id=request.session_id,
+            order=closed,
         )
     except Exception as e:
         logger.exception(f"Error in /ai/reply: {e}")
@@ -188,6 +200,17 @@ async def ai_catalog_search(request: CatalogSearchRequest):
     except Exception as e:
         logger.exception(f"Error in /ai/catalog-search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ai/embed", response_model=EmbedResponse, dependencies=[Depends(require_secret)])
+async def ai_embed(request: EmbedRequest):
+    """Embed texts for hybrid catalog retrieval."""
+    from embeddings import embed_texts
+    try:
+        return EmbedResponse(vectors=embed_texts(request.texts))
+    except RuntimeError as exc:
+        logger.warning("Embedding unavailable: %s", exc)
+        raise HTTPException(status_code=502, detail="Embedding provider unavailable")
 
 
 # ──────────────────────────────────────────────

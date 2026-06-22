@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
-import type { OrderStatus, Settings } from "./types";
+import type { OrderStatus, PaymentMethod, Settings } from "./types";
 
 export const keys = {
   summary: ["summary"] as const,
   orders: (status?: string) => ["orders", status ?? "all"] as const,
   products: ["products"] as const,
   settings: ["settings"] as const,
+  business: ["business"] as const,
   whatsapp: ["whatsapp"] as const,
   customers: ["customers"] as const,
   customer: (id: number) => ["customer", id] as const,
@@ -17,6 +18,7 @@ export const useOrders = (status?: string) =>
   useQuery({ queryKey: keys.orders(status), queryFn: () => api.orders(status) });
 export const useProducts = () => useQuery({ queryKey: keys.products, queryFn: api.products });
 export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: api.settings });
+export const useBusiness = () => useQuery({ queryKey: keys.business, queryFn: api.getBusiness });
 export const useWhatsapp = () => useQuery({ queryKey: keys.whatsapp, queryFn: api.whatsappStatus });
 
 export function useUpdateOrderStatus() {
@@ -82,4 +84,17 @@ export function useEmbeddedSignup() {
     mutationFn: (d: { code: string; phone_number_id: string; waba_id: string }) => api.embeddedSignup(d),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.whatsapp }),
   });
+}
+
+export function useUpdateBusiness() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (d: { business_name: string; payment_methods?: PaymentMethod[]; qris_image_url?: string | null }) =>
+      api.updateBusiness(d),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.business }),
+  });
+}
+
+export function useSendOrderPayment() {
+  return useMutation({ mutationFn: (id: number) => api.sendOrderPayment(id) });
 }

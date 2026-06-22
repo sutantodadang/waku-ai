@@ -1,11 +1,13 @@
 import { authStore } from "./auth";
 import type {
+  BusinessProfile,
   Customer,
   CustomerDetail,
   DashboardSummary,
   OTPRequestResponse,
   Order,
   OrderStatus,
+  PaymentMethod,
   Product,
   Settings,
   TokenResponse,
@@ -86,8 +88,13 @@ export const api = {
   // ── Settings + business ──
   settings: () => req<Settings>("/api/settings"),
   updateSettings: (d: Partial<Settings>) => req<Settings>("/api/settings", { method: "PUT", ...body(d) }),
+  getBusiness: () => req<BusinessProfile>("/api/business"),
   renameBusiness: (business_name: string) =>
     req<{ business_name: string }>("/api/business", { method: "PATCH", ...body({ business_name }) }),
+  updateBusiness: (d: { business_name: string; payment_methods?: PaymentMethod[]; qris_image_url?: string | null }) =>
+    req<BusinessProfile>("/api/business", { method: "PATCH", ...body(d) }),
+  sendOrderPayment: (id: number) =>
+    req<{ sent: boolean }>(`/api/orders/${id}/send-payment`, { method: "POST" }),
 
   // ── WhatsApp ──
   whatsappStatus: () => req<WhatsAppConnection>("/api/whatsapp/status"),

@@ -38,7 +38,7 @@ class OrderState:
     def summary(self) -> str:
         if not self.items:
             return "Belum ada item."
-        lines = ["Pesanan Kakak:"]
+        lines = ["Pesanan Kakak (sementara):"]
         for i, item in enumerate(self.items, 1):
             lines.append(f"{i}. {item['name']} x{item['qty']} = Rp{item['price']*item['qty']:,.0f}")
         lines.append(f"Total: Rp{self.total():,.0f}")
@@ -59,6 +59,7 @@ class Conversation:
     messages: list[dict] = field(default_factory=lambda: deque(maxlen=MAX_CONTEXT))
     order: OrderState = field(default_factory=OrderState)
     catalog: list[dict] = field(default_factory=list)
+    closed_order: Optional[dict] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -136,6 +137,7 @@ def generate_reply(session_id: str, incoming_message: str,
         Reply string in Bahasa Indonesia
     """
     conv = manager.get_or_create(session_id)
+    conv.closed_order = None
 
     if catalog:
         conv.set_catalog(catalog)
@@ -238,6 +240,15 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
                           "sudah dulu", "ya itu", "iya itu"]
         if any(signal in text_lower for signal in closing_signals):
             conv.order.active = False
+            import sys as _sys
+            extracted = _sys.modules[__name__].extract_order_from_chat(conv.get_context(), conv.catalog)
+            items = extracted.get("items") or []
+            if items:
+                conv.closed_order = {
+                    "items": items,
+                    "total": extracted.get("total", 0.0),
+                    "status": "closed",
+                }
             return (f"Siap Kak! Pesanannya:\n{conv.order.summary()}\n"
                     "Waku akan teruskan ke pemilik toko ya. Terima kasih Kak! 😊")
 
@@ -305,7 +316,7 @@ def _llm_reply(conv: Conversation, intent: str, business_context: Optional[dict]
     if conv.catalog:
         catalog_text = "\n".join(
             f"- {item['name']}: Rp{item['price']:,.0f}" + (f" (stok: {'ada' if item.get('stock', True) else 'habis'})" if 'stock' in item else "")
-            for item in conv.catalog[:20]  # Limit to 20 items
+            for item in conv.catalog
         )
         extra_context += f"\n\nKATALOG PRODUK:\n{catalog_text}"
 
