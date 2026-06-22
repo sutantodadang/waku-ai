@@ -187,15 +187,13 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
 
         # Check if there's a product mention
         product_names = analysis["entities"]["product_names"]
-        quantities = analysis["entities"]["quantities"]
 
+        product_quantities = analysis["entities"].get("product_quantities", [])
         if product_names:
             conv.order.active = True
             conv.order.started_at = datetime.now().isoformat()
-            for name in product_names:
-                qty = 1
-                if quantities:
-                    qty = quantities[0][0]
+            for i, name in enumerate(product_names):
+                qty = product_quantities[i] if i < len(product_quantities) else 1
                 # Find price from catalog
                 price = 0.0
                 for item in conv.catalog:
@@ -213,7 +211,6 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
     # ── Adding items to existing order ──
     if conv.order.active:
         product_names = analysis["entities"]["product_names"]
-        quantities = analysis["entities"]["quantities"]
 
         # Check for closing signals
         closing_signals = ["itu saja", "itu aja", "cukup", "selesai", "sudah",
@@ -225,11 +222,10 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
                     "Waku akan teruskan ke pemilik toko ya. Terima kasih Kak! 😊")
 
         # More items mentioned
+        product_quantities = analysis["entities"].get("product_quantities", [])
         if product_names:
-            for name in product_names:
-                qty = 1
-                if quantities:
-                    qty = quantities[0][0]
+            for i, name in enumerate(product_names):
+                qty = product_quantities[i] if i < len(product_quantities) else 1
                 price = 0.0
                 for item in conv.catalog:
                     if item.get("name", "").lower() == name.lower():
@@ -338,13 +334,13 @@ def _extract_order_rule_based(chat_messages: list[dict], catalog: Optional[list[
         entities = analysis["entities"]
 
         product_names = entities.get("product_names", [])
-        quantities = entities.get("quantities", [])
+        product_quantities = entities.get("product_quantities", [])
 
         for i, name in enumerate(product_names):
             if name.lower() in seen_names:
                 continue
             seen_names.add(name.lower())
-            qty = quantities[i][0] if i < len(quantities) else 1
+            qty = product_quantities[i] if i < len(product_quantities) else 1
             price = catalog_price_map.get(name.lower(), 0.0)
             items.append({"name": name, "qty": qty, "price": price})
 

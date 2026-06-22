@@ -16,7 +16,13 @@ import os
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
+from dotenv import load_dotenv
 from sqlalchemy import String, TypeDecorator
+
+# crypto is imported (via models) before main.py's load_dotenv() runs, so load
+# .env here too — otherwise TOKEN_ENCRYPTION_KEY is never seen and we fall back
+# to an ephemeral key that changes every reload, making stored tokens unreadable.
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

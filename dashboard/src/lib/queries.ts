@@ -58,3 +58,11 @@ export function useConnectWhatsapp() {
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.whatsapp }),
   });
 }
+
+export function useEmbeddedSignup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (d: { code: string; phone_number_id: string; waba_id: string }) => api.embeddedSignup(d),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.whatsapp }),
+  });
+}

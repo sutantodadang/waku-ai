@@ -239,6 +239,35 @@ def extract_entities(text: str, catalog_items: Optional[list[str]] = None) -> di
             if item.lower() in text_lower:
                 result["product_names"].append(item)
 
+    # Per-product quantity, aligned to product_names. QUANTITY_PATTERN requires a
+    # unit ("2 porsi"), so bare numbers like "nasi goreng 2" are missed — resolve
+    # here by scanning the number adjacent to each product name (matches the
+    # backend's catalog extractor, so the WA reply and the dashboard order agree).
+    NUMBER_WORDS = {"satu": 1, "dua": 2, "tiga": 3, "empat": 4, "lima": 5,
+                    "enam": 6, "tujuh": 7, "delapan": 8, "sembilan": 9, "sepuluh": 10}
+    product_quantities = []
+    for name in result["product_names"]:
+        nlow = name.lower()
+        idx = text_lower.find(nlow)
+        qty = 1
+        if idx != -1:
+            before = text_lower[:idx]
+            after = text_lower[idx + len(nlow):]
+            m_before = re.search(r"(\d+)\s*x?\s*$", before)
+            m_after = re.match(r"\s*x?\s*(\d+)", after)
+            if m_before:
+                qty = int(m_before.group(1))
+            elif m_after:
+                qty = int(m_after.group(1))
+            else:
+                window = before[-20:] + " " + after[:20]
+                for word, num in NUMBER_WORDS.items():
+                    if re.search(r"\b" + word + r"\b", window):
+                        qty = num
+                        break
+        product_quantities.append(qty)
+    result["product_quantities"] = product_quantities
+
     # Raw numbers (all digits found)
     all_numbers = re.findall(r"\b(\d+)\b", text)
     result["raw_numbers"] = [int(n) for n in all_numbers if int(n) < 1000000]

@@ -61,6 +61,15 @@ class ConnectWhatsApp(BaseModel):
     access_token: str = Field(..., description="Meta send token (stored encrypted)")
 
 
+class EmbeddedSignup(BaseModel):
+    """POST /api/whatsapp/embedded-signup — finish Meta Embedded Signup.
+    Frontend FB.login returns `code`; the WA_EMBEDDED_SIGNUP message event
+    returns phone_number_id + waba_id."""
+    code: str = Field(..., description="Auth code from FB.login response")
+    phone_number_id: str = Field(..., description="From WA_EMBEDDED_SIGNUP event")
+    waba_id: str = Field(..., description="WhatsApp Business Account id")
+
+
 class WhatsAppConnectionResponse(BaseModel):
     is_connected: bool
     phone_number_id: Optional[str] = None

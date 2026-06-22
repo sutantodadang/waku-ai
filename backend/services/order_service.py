@@ -72,6 +72,35 @@ def extract_order_from_message(text: str, known_products: Optional[dict[str, flo
     )
     text = prefix_pattern.sub("", text).strip()
 
+    # Catalog-driven matching: when we know the business's products, match those
+    # names directly. Far more reliable than the generic regex, and gives correct
+    # display name + price (so the dashboard total is real, not 0).
+    if known_products:
+        text_low = re.sub(r"\s+", " ", text.lower())
+        for pname in sorted(known_products, key=len, reverse=True):
+            nlow = pname.lower()
+            if nlow in seen or nlow not in text_low:
+                continue
+            idx = text_low.find(nlow)
+            before, after = text_low[:idx], text_low[idx + len(nlow):]
+            qty = 1
+            m_before = re.search(r"(\d+)\s*x?\s*$", before)
+            m_after = re.match(r"\s*x?\s*(\d+)", after)
+            if m_before:
+                qty = int(m_before.group(1))
+            elif m_after:
+                qty = int(m_after.group(1))
+            else:
+                for word, num in QUANTITY_WORDS.items():
+                    if re.search(r"\b" + word + r"\b", before):
+                        qty = num
+                        break
+            seen.add(nlow)
+            items.append({"name": pname, "quantity": qty, "price": known_products[pname]})
+        if items:
+            logger.debug("Catalog-matched %d items from: '%s'", len(items), text[:80])
+            return items
+
     # Split into segments on commas / dan / sama / plus
     segments = SPLIT_PATTERN.split(text)
 

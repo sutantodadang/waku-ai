@@ -36,6 +36,7 @@ from schemas import (
     ConnectWhatsApp,
     DashboardSummary,
     DailySummary,
+    EmbeddedSignup,
     OrderDashboardResponse,
     OrderResponse,
     OrderStatusUpdate,
@@ -56,10 +57,12 @@ from schemas import (
 )
 from services.whatsapp import (
     PLATFORM_PHONE_NUMBER_ID,
+    exchange_code_for_token,
     extract_phone_number_id,
     parse_statuses,
     parse_whatsapp_message,
     send_message,
+    subscribe_app_to_waba,
     verify_signature,
     verify_webhook as verify_webhook_token,
 )
@@ -247,7 +250,11 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
             customer = await get_or_create_customer(session, business.id, from_number)
             await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
 
-            order_items = extract_order_from_message(text)
+            products = (
+                await session.execute(select(Product).where(Product.business_id == business.id))
+            ).scalars().all()
+            known_products = {p.name: p.price for p in products}
+            order_items = extract_order_from_message(text, known_products or None)
             if order_items:
                 order = await create_order(session, business.id, customer.id, order_items)
                 logger.info("Order #%d auto-extracted from message.", order.id)
@@ -307,6 +314,16 @@ async def _handle_platform_message(session: AsyncSession, from_number: str, text
             otp.consumed = True
             await session.flush()
             logger.info("Reverse-OTP verified for %s (purpose=%s).", from_number, otp.purpose)
+            # Confirm back over WhatsApp so the user knows the code was accepted.
+            # No creds passed → sends from the platform number (default creds).
+            try:
+                await send_message(
+                    from_number,
+                    "✅ Kode terverifikasi! Anda berhasil masuk ke Waku.\n"
+                    "Silakan kembali ke dashboard untuk melanjutkan ya 🎉",
+                )
+            except Exception:
+                logger.warning("Failed to send reverse-OTP confirmation to %s", from_number)
             return True
     return False
 
@@ -529,6 +546,46 @@ async def whatsapp_connect(
     )
 
 
+@app.post("/api/whatsapp/embedded-signup", response_model=WhatsAppConnectionResponse)
+async def whatsapp_embedded_signup(
+    body: EmbeddedSignup,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """Finish Meta Embedded Signup: exchange the auth code for a business token,
+    store creds, and subscribe our app to the WABA so webhooks flow."""
+    clash = (await session.execute(
+        select(Business).where(
+            Business.phone_number_id == body.phone_number_id,
+            Business.id != business.id,
+        )
+    )).scalar_one_or_none()
+    if clash:
+        raise HTTPException(status_code=409, detail="phone_number_id sudah dipakai bisnis lain.")
+
+    try:
+        token = await exchange_code_for_token(body.code)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except httpx.HTTPError as exc:
+        logger.error("Embedded Signup token exchange failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Gagal menukar kode dengan Meta.")
+
+    business.phone_number_id = body.phone_number_id
+    business.waba_id = body.waba_id
+    business.access_token = token
+    business.is_connected = True
+    await session.flush()
+
+    await subscribe_app_to_waba(body.waba_id, token)
+
+    return WhatsAppConnectionResponse(
+        is_connected=True,
+        phone_number_id=business.phone_number_id,
+        waba_id=business.waba_id,
+    )
+
+
 @app.get("/api/whatsapp/status", response_model=WhatsAppConnectionResponse)
 async def whatsapp_status(business: Business = Depends(get_current_business)):
     """Connection status for the authenticated business."""
@@ -537,55 +594,6 @@ async def whatsapp_status(business: Business = Depends(get_current_business)):
         phone_number_id=business.phone_number_id,
         waba_id=business.waba_id,
     )
-
-
-@app.get("/api/whatsapp/embedded-signup/callback")
-async def embedded_signup_callback(
-    code: str = Query(..., description="OAuth code from Meta Embedded Signup"),
-    session: AsyncSession = Depends(get_db),
-    business: Business = Depends(get_current_business),
-):
-    """
-    SKELETON — Meta Embedded Signup OAuth callback (Scope B).
-
-    Inert until the Meta app passes App Review + business verification and you
-    are a registered Tech Provider. Once live:
-      1. Exchange `code` for an access token (META_APP_ID + META_APP_SECRET).
-      2. Read the connected WABA + phone_number_id from the granted token.
-      3. Store waba_id + phone_number_id + access_token (encrypted) on `business`.
-      4. Subscribe the WABA to our webhook.
-    """
-    meta_app_id = os.getenv("META_APP_ID", "")
-    meta_app_secret = os.getenv("META_APP_SECRET", "")
-    if not meta_app_id or not meta_app_secret:
-        raise HTTPException(
-            status_code=501,
-            detail="Embedded Signup belum aktif — menunggu Meta App Review & META_APP_ID/META_APP_SECRET.",
-        )
-
-    token_url = "https://graph.facebook.com/v21.0/oauth/access_token"
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(token_url, params={
-                "client_id": meta_app_id,
-                "client_secret": meta_app_secret,
-                "code": code,
-            })
-            resp.raise_for_status()
-            access_token = resp.json().get("access_token", "")
-    except Exception as exc:
-        logger.exception("Embedded Signup token exchange failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Gagal menukar kode dengan token Meta.")
-
-    if not access_token:
-        raise HTTPException(status_code=502, detail="Token kosong dari Meta.")
-
-    # WABA + phone_number_id discovery is added when the Tech Provider integration
-    # is finalized; store the token for now.
-    business.access_token = access_token
-    business.is_connected = bool(business.phone_number_id)
-    await session.flush()
-    return {"status": "ok", "is_connected": business.is_connected}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
