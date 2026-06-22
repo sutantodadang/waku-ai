@@ -1343,3 +1343,44 @@ async def update_booking(
     # Task 6 wires the status→WA notify + payment here.
     await _maybe_notify_booking_status(session, business, booking, customer, body.status)
     return await _booking_to_dict(session, booking, customer.name or customer.phone_number)
+
+
+async def _load_booking(session, business, booking_id):
+    row = (await session.execute(
+        select(Booking, Customer).join(Customer, Booking.customer_id == Customer.id)
+        .where(Booking.id == booking_id, Booking.business_id == business.id)
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Booking not found for this business.")
+    return row
+
+
+@app.post("/api/bookings/{booking_id}/remind", response_model=SendPaymentResponse)
+async def remind_booking(
+    booking_id: int,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    booking, customer = await _load_booking(session, business, booking_id)
+    if not await within_service_window(session, customer.id):
+        return SendPaymentResponse(sent=False)
+    msg = f"Halo Kak, pengingat booking {_fmt_when(booking.scheduled_at)} ya 🙏"
+    try:
+        await send_message(customer.phone_number, msg,
+                           phone_number_id=business.phone_number_id, access_token=business.access_token)
+        return SendPaymentResponse(sent=True)
+    except Exception:
+        logger.exception("Reminder send failed for booking %d", booking.id)
+        return SendPaymentResponse(sent=False)
+
+
+@app.post("/api/bookings/{booking_id}/send-payment", response_model=SendPaymentResponse)
+async def send_booking_payment(
+    booking_id: int,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    booking, customer = await _load_booking(session, business, booking_id)
+    amount = booking.deposit_amount if booking.deposit_amount else booking.total
+    sent = await send_payment_info(session, business, customer, amount)
+    return SendPaymentResponse(sent=sent)
