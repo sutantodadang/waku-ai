@@ -64,7 +64,7 @@ def test_code_from_wrong_sender_not_consumed(client):
     assert client.post("/api/auth/otp/verify", json={"phone_number": "081111111111", "code": code}).status_code == 400
 
 
-def test_platform_channel_does_not_send(client, monkeypatch):
+def test_platform_channel_sends_otp_confirmation(client, monkeypatch):
     sent = {"n": 0}
 
     async def fake_send(*a, **k):
@@ -76,4 +76,4 @@ def test_platform_channel_does_not_send(client, monkeypatch):
     code = request_otp(client, "081111111111")
     r = deliver_otp_via_wa(client, "6281111111111", code)
     assert r.json().get("channel") == "platform"
-    assert sent["n"] == 0  # OTP / system channel never sends or calls the LLM
+    assert sent["n"] == 1  # one confirmation reply; OTP path still never calls the LLM

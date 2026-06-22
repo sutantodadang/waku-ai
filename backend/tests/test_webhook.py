@@ -43,7 +43,7 @@ def test_platform_number_otp_not_sent_to_ai(client, monkeypatch):
     body = wh.json()
     assert body["otp_matched"] == 1
     assert body["ai_handled"] == 0
-    assert sent == []  # OTP path sends nothing
+    assert sent == ["6281111111111"]  # only the confirmation reply, never the LLM
 
 
 def test_delivery_status_callback_logged_not_a_message(client):

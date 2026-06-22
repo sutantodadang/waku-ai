@@ -91,6 +91,8 @@ export const api = {
   whatsappStatus: () => req<WhatsAppConnection>("/api/whatsapp/status"),
   connectWhatsapp: (d: { phone_number_id: string; access_token: string; waba_id?: string }) =>
     req<WhatsAppConnection>("/api/whatsapp/connect", { method: "PUT", ...body(d) }),
+  embeddedSignup: (d: { code: string; phone_number_id: string; waba_id: string }) =>
+    req<WhatsAppConnection>("/api/whatsapp/embedded-signup", { method: "POST", ...body(d) }),
 
   // ── Upload (multipart) ──
   async upload(file: File): Promise<string> {

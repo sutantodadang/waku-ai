@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # ── Configuration ───────────────────────────────────────────────────────────────
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "waku_verify_123")
 APP_SECRET = os.getenv("APP_SECRET", "")
-API_VERSION = "v21.0"
+API_VERSION = "v23.0"
 
 # Platform-level credentials — the OWN number Waku uses for the reverse-OTP /
 # system channel. Per-business sends pass their own phone_number_id + token.
@@ -33,6 +33,45 @@ PLATFORM_PHONE_NUMBER_ID = (
 )
 
 GRAPH_BASE = f"https://graph.facebook.com/{API_VERSION}"
+
+
+# ── Meta Embedded Signup ────────────────────────────────────────────────────────
+META_APP_ID = os.getenv("META_APP_ID", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+
+
+async def exchange_code_for_token(code: str) -> str:
+    """Exchange an Embedded Signup auth code for a business-scoped access token.
+
+    Raises RuntimeError if app creds aren't configured or Meta returns no token;
+    propagates httpx errors on a failed request.
+    """
+    if not META_APP_ID or not META_APP_SECRET:
+        raise RuntimeError("META_APP_ID / META_APP_SECRET belum dikonfigurasi.")
+    url = f"{GRAPH_BASE}/oauth/access_token"
+    params = {"client_id": META_APP_ID, "client_secret": META_APP_SECRET, "code": code}
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+        token = resp.json().get("access_token")
+    if not token:
+        raise RuntimeError("Meta tidak mengembalikan access_token untuk kode ini.")
+    return token
+
+
+async def subscribe_app_to_waba(waba_id: str, access_token: str) -> bool:
+    """Subscribe our app to the business's WABA so webhooks flow to us.
+    Best-effort: logs and returns False on failure (connection still usable)."""
+    url = f"{GRAPH_BASE}/{waba_id}/subscribed_apps"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(url, headers=headers)
+            resp.raise_for_status()
+        return True
+    except httpx.HTTPError as exc:
+        logger.error("Failed to subscribe app to WABA %s: %s", waba_id, exc)
+        return False
 
 
 def _resolve_credentials(phone_number_id: Optional[str], access_token: Optional[str]) -> tuple[str, str]:

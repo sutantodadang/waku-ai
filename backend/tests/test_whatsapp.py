@@ -38,9 +38,3 @@ def test_token_encrypted_at_rest(client):
             raw = (await s.execute(text("SELECT access_token FROM businesses WHERE id=:i"), {"i": bid})).scalar()
             assert raw != "SUPER_SECRET_TOKEN"  # stored ciphertext, not plaintext
     asyncio.run(check())
-
-
-def test_embedded_signup_skeleton_returns_501_without_meta_creds(client):
-    t = register(client)
-    r = client.get("/api/whatsapp/embedded-signup/callback?code=abc", headers=auth(t["access_token"]))
-    assert r.status_code == 501
