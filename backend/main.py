@@ -79,6 +79,7 @@ from services.order_service import (
     recompute_customer_stats,
     save_message,
 )
+from services.embeddings import embed_product
 
 load_dotenv()
 
@@ -969,6 +970,7 @@ async def dashboard_create_product(
     )
     session.add(product)
     await session.flush()
+    await embed_product(session, product)
     logger.info("Product #%d '%s' created for business %d", product.id, product.name, business.id)
     return product
 
@@ -990,6 +992,7 @@ async def dashboard_update_product(
     for field, value in update_data.items():
         setattr(product, field, value)
     await session.flush()
+    await embed_product(session, product)
     return product
 
 
