@@ -106,9 +106,9 @@ def test_order_auto_extracted_from_message(client, monkeypatch):
 
     monkeypatch.setattr(main, "send_message", fake_send)
 
-    async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
+    async def fake_reply(session, business, sid, text, customer=None):
         order = {"items": [{"name": "nasi goreng", "qty": 2, "price": None}, {"name": "es teh", "qty": 1, "price": None}], "total": 0, "status": "closed"}
-        return ("ok", order)
+        return ("ok", order, True)
     monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
 
     t = register(client)
@@ -127,11 +127,11 @@ def test_offcatalog_item_creates_no_order(client, monkeypatch):
     monkeypatch.setattr(main, "send_message", fake_send)
 
     replies = iter([
-        ("ok", None),  # off-catalog message → AI does not close an order
-        ("ok", {"items": [{"name": "Nasi Goreng", "qty": 2, "price": 14000}], "total": 28000, "status": "closed"}),
+        ("ok", None, True),  # off-catalog message → AI does not close an order
+        ("ok", {"items": [{"name": "Nasi Goreng", "qty": 2, "price": 14000}], "total": 28000, "status": "closed"}, True),
     ])
 
-    async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
+    async def fake_reply(session, business, sid, text, customer=None):
         return next(replies)
     monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
     # Disable regex fallback so off-catalog text cannot sneak through.
@@ -159,9 +159,9 @@ def test_order_updates_customer_stats(client, monkeypatch):
 
     monkeypatch.setattr(main, "send_message", fake_send)
 
-    async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
+    async def fake_reply(session, business, sid, text, customer=None):
         order = {"items": [{"name": "Nasi Goreng", "qty": 2, "price": 14000}], "total": 28000, "status": "closed"}
-        return ("ok", order)
+        return ("ok", order, True)
     monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
 
     t = register(client)

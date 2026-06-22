@@ -294,7 +294,7 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
             customer = await get_or_create_customer(session, business.id, from_number)
             await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
 
-            reply, ai_order = await _generate_ai_reply(
+            reply, ai_order, ai_ok = await _generate_ai_reply(
                 session, business, customer.phone_number, text, customer=customer
             )
 
@@ -302,7 +302,7 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
                 await _persist_ai_order(session, business, customer, ai_order)
                 # Auto-send payment after the order is finalised (Task 10 wires this).
                 await _maybe_send_payment(session, business, customer)
-            elif ai_order is None and _AI_FALLBACK_ORDER_REGEX:
+            elif (not ai_ok) and _AI_FALLBACK_ORDER_REGEX:
                 # AI unreachable → degraded regex fallback so orders aren't lost.
                 products = (await session.execute(
                     select(Product).where(Product.business_id == business.id)
@@ -423,15 +423,15 @@ async def _generate_ai_reply(
     business: Business,
     session_id: str,
     message_text: str,
-    extracted_order: Optional[list[dict]] = None,
     customer: Optional[Customer] = None,
-) -> tuple[str, Optional[dict]]:
+) -> tuple[str, Optional[dict], bool]:
     """
     Forward the message to the AI service (/ai/reply), scoped to this business's
     catalog + context. Falls back to a sensible Indonesian reply when the AI
     service is unreachable.
-    Returns (reply_text, ai_order) where ai_order is the order dict from the AI
-    response (or None when the AI is unreachable / did not close an order).
+    Returns (reply_text, ai_order, ai_ok) where:
+      - ai_order is the order dict from the AI response (or None when the AI did not close an order)
+      - ai_ok is True when the AI service responded successfully, False when unreachable/errored
     """
     catalog = await select_relevant_products(session, business.id, message_text, k=12)
 
@@ -456,21 +456,13 @@ async def _generate_ai_reply(
             reply = data.get("reply", "")
             ai_order = data.get("order")
             if reply:
-                return reply, ai_order
+                return reply, ai_order, True
     except httpx.RequestError as exc:
         logger.warning("AI service unreachable (%s) — using fallback reply.", exc)
     except Exception as exc:
         logger.exception("AI service error: %s", exc)
 
-    # Fallback replies in Indonesian
-    if extracted_order:
-        items_desc = ", ".join(f"{it.get('quantity', 1)}x {it.get('name', '?')}" for it in extracted_order)
-        return (
-            f"Terima kasih atas pesanannya! 🎉\n\n"
-            f"Saya sudah mencatat pesanan Anda:\n{items_desc}\n\n"
-            f"Pesanan akan segera diproses. Apakah ada yang ingin ditambahkan?",
-            None,
-        )
+    # Fallback reply in Indonesian — AI service was unreachable
     return (
         "Halo! 👋 Saya asisten Waku untuk UMKM.\n\n"
         "Saya bisa bantu mencatat pesanan Anda. Cukup ketik pesanan seperti:\n"
@@ -478,6 +470,7 @@ async def _generate_ai_reply(
         "• \"saya mau pesan 3 ayam geprek\"\n\n"
         "Ada yang bisa saya bantu?",
         None,
+        False,
     )
 
 
