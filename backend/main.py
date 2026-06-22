@@ -765,6 +765,8 @@ async def update_business_profile(
         business.payment_methods = [m.model_dump() for m in body.payment_methods]
     if body.qris_image_url is not None:
         business.qris_image_url = body.qris_image_url or None
+    if body.business_type is not None:
+        business.business_type = body.business_type
     await session.flush()
     return business
 
@@ -1124,6 +1126,7 @@ async def dashboard_create_product(
         price=body.price,
         description=body.description,
         image_url=body.image_url,
+        duration_minutes=body.duration_minutes,
     )
     session.add(product)
     await session.flush()

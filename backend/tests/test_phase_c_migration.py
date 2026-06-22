@@ -19,7 +19,6 @@ async def test_phase_c_schema(client):
     assert "duration_minutes" in s["products"]
 
 
-@pytest.mark.skip(reason="GET /api/business added in Task 3")
 def test_existing_business_defaults_to_warung(client):
     from helpers import register, auth
     t = register(client)
