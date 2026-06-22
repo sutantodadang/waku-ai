@@ -56,6 +56,9 @@ class Business(Base):
     waba_id: Mapped[Optional[str]] = mapped_column(String(64))
     access_token: Mapped[Optional[str]] = mapped_column(EncryptedString(512))  # encrypted at rest
     is_connected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # ── Phase B: payment delivery ──
+    payment_methods: Mapped[list] = mapped_column(JSON, default=list)
+    qris_image_url: Mapped[Optional[str]] = mapped_column(String(512))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -135,6 +138,9 @@ class Product(Base):
     price: Mapped[float] = mapped_column(Float, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     image_url: Mapped[Optional[str]] = mapped_column(String(512))
+    # ── Phase B: hybrid retrieval cache ──
+    embedding: Mapped[Optional[list]] = mapped_column(JSON)
+    embedding_hash: Mapped[Optional[str]] = mapped_column(String(64))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

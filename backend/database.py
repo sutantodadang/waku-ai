@@ -67,6 +67,16 @@ _CUSTOMER_NEW_COLUMNS: dict[str, str] = {
     "stats_updated_at": "DATETIME",
 }
 
+_PRODUCT_NEW_COLUMNS: dict[str, str] = {
+    "embedding": "JSON",
+    "embedding_hash": "VARCHAR(64)",
+}
+
+_BUSINESS_PAYMENT_COLUMNS: dict[str, str] = {
+    "payment_methods": "JSON",
+    "qris_image_url": "VARCHAR(512)",
+}
+
 
 def _run_migrations(sync_conn) -> None:
     """Idempotent schema top-up for existing databases (SQLite)."""
@@ -92,6 +102,19 @@ def _run_migrations(sync_conn) -> None:
             if name not in cust_existing:
                 sync_conn.exec_driver_sql(f"ALTER TABLE customers ADD COLUMN {name} {ddl}")
                 logger.info("Migration: added customers.%s", name)
+    # products: Phase B retrieval cache
+    if "products" in insp.get_table_names():
+        prod_existing = {c["name"] for c in insp.get_columns("products")}
+        for name, ddl in _PRODUCT_NEW_COLUMNS.items():
+            if name not in prod_existing:
+                sync_conn.exec_driver_sql(f"ALTER TABLE products ADD COLUMN {name} {ddl}")
+                logger.info("Migration: added products.%s", name)
+    # businesses: Phase B payment columns
+    biz_existing = {c["name"] for c in insp.get_columns("businesses")}
+    for name, ddl in _BUSINESS_PAYMENT_COLUMNS.items():
+        if name not in biz_existing:
+            sync_conn.exec_driver_sql(f"ALTER TABLE businesses ADD COLUMN {name} {ddl}")
+            logger.info("Migration: added businesses.%s", name)
 
 
 async def init_db() -> None:
