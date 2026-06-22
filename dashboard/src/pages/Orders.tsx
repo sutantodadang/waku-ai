@@ -48,7 +48,7 @@ export default function Orders() {
             </span>
           </div>
           <p className="my-1 text-xs text-gray-500">Pesanan #{o.id} • {new Date(o.created_at).toLocaleString("id-ID")}</p>
-          <p className="font-bold text-orange">{fmtRp(o.total)}</p>
+          <p className="tnum text-lg font-extrabold text-ink">{fmtRp(o.total)}</p>
           {o.items?.map((it, i) => (
             <p key={i} className="ml-3 text-sm text-gray-600">
               • {it.name} x{it.quantity ?? it.qty ?? 1} — {fmtRp(it.price ?? 0)}

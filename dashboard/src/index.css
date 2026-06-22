@@ -1,12 +1,24 @@
 @import "tailwindcss";
 
 @theme {
-  --color-teal: #008080;
-  --color-teal-dark: #004d40;
-  --color-teal-light: #e0f2f1;
-  --color-orange: #ff6d00;
-  --color-orange-bg: #ff9800;
+  /* Palette — drawn from the shop's world: WhatsApp green, sambal, turmeric. */
+  --color-paper: #f3f4f1;
+  --color-ink: #0c1f17;
+  --color-brand: #00a884;
+  --color-brand-deep: #04785f;
+  --color-brand-tint: #e7f4ef;
+  --color-accent: #ff5a36;
+  --color-gold: #f4b400;
+
+  /* Legacy names kept (repointed) so existing pages recolor cohesively. */
+  --color-teal: #00a884;
+  --color-teal-dark: #0c1f17;
+  --color-teal-light: #e7f4ef;
+  --color-orange: #ff5a36;
+  --color-orange-bg: #ff7a4d;
+
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "Plus Jakarta Sans", sans-serif;
 }
 
 html,
@@ -17,7 +29,49 @@ body,
 
 body {
   margin: 0;
-  background: #f5f5f5;
-  color: #1f2937;
+  background: var(--color-paper);
+  color: var(--color-ink);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Visible keyboard focus everywhere; pointer clicks stay clean. */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* Money and counts line up and don't jitter as they change. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Receipt-style dashed tear line. */
+.tear {
+  height: 1px;
+  background-image: linear-gradient(to right, currentColor 0 6px, transparent 6px 12px);
+  background-size: 12px 1px;
+  opacity: 0.25;
+}
+
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+.pt-safe {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

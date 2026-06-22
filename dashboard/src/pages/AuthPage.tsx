@@ -18,11 +18,14 @@ export default function AuthPage() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-5">
-      <div className="mb-6 text-center">
-        <div className="text-3xl font-extrabold text-teal-dark">Waku 🤖</div>
-        <p className="text-sm text-gray-500">Asisten WhatsApp pintar untuk UMKM</p>
+      <div className="mb-6 flex flex-col items-center text-center">
+        <span className="mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-brand text-xl font-extrabold text-white shadow-[0_6px_18px_rgba(0,168,132,0.35)]">
+          W
+        </span>
+        <div className="font-display text-3xl font-extrabold tracking-tight text-ink">Waku</div>
+        <p className="text-sm text-ink/55">Asisten WhatsApp untuk usaha Anda</p>
       </div>
-      <div className="mb-4 grid grid-cols-3 rounded-full bg-gray-100 p-1 text-sm font-semibold">
+      <div className="mb-4 grid grid-cols-3 gap-1 rounded-2xl bg-ink/[0.05] p-1 text-sm font-semibold">
         {(["login", "register", "otp"] as Tab[]).map((t) => (
           <button
             key={t}
@@ -30,14 +33,14 @@ export default function AuthPage() {
               setTab(t);
               setErr("");
             }}
-            className={`rounded-full py-2 ${tab === t ? "bg-white text-orange shadow" : "text-gray-500"}`}
+            className={`min-h-[2.25rem] rounded-xl transition ${tab === t ? "bg-white text-ink shadow-sm" : "text-ink/50"}`}
           >
             {t === "login" ? "Masuk" : t === "register" ? "Daftar" : "OTP WA"}
           </button>
         ))}
       </div>
       {err && <div className="mb-3"><ErrorBox message={err} /></div>}
-      <div className="rounded-2xl bg-white p-5 shadow-sm">
+      <div className="rounded-[20px] bg-white p-5 ring-1 ring-ink/[0.06] shadow-[0_1px_3px_rgba(12,31,23,0.05)]">
         {tab === "login" && <LoginForm onDone={done} onError={fail} />}
         {tab === "register" && <RegisterForm onDone={done} onError={fail} />}
         {tab === "otp" && <OtpForm onDone={done} onError={fail} />}
