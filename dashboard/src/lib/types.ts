@@ -95,3 +95,15 @@ export interface CustomerDetail extends Customer {
   avg_cadence_days: number | null;
   recent_orders: Order[];
 }
+
+export interface PaymentMethod {
+  type: "qris" | "rekening" | "ewallet";
+  label: string;
+  value: string;
+}
+
+export interface BusinessProfile {
+  business_name: string;
+  payment_methods?: PaymentMethod[];
+  qris_image_url?: string | null;
+}

@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "@tanstack/react-router";
-import { useSettings, useUpdateSettings } from "../lib/queries";
+import { useSettings, useUpdateSettings, useUpdateBusiness } from "../lib/queries";
 import { api, ApiError } from "../lib/api";
 import { authStore, useAuth } from "../lib/auth";
 import { Button, Card, ErrorBox, Field, inputCls, PageTitle, Spinner } from "../components/ui";
-import type { FAQItem, Settings as SettingsT } from "../lib/types";
+import type { FAQItem, PaymentMethod, Settings as SettingsT } from "../lib/types";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-3 font-display text-base font-bold text-ink">{children}</h2>;
@@ -14,6 +14,9 @@ export default function Settings() {
   const { data, isLoading, error } = useSettings();
   const save = useUpdateSettings();
   const { businessName } = useAuth();
+  const updateBiz = useUpdateBusiness();
+  const [methods, setMethods] = useState<PaymentMethod[]>([]);
+  const [qris, setQris] = useState("");
 
   const [form, setForm] = useState<SettingsT | null>(null);
   const [saved, setSaved] = useState(false);
@@ -35,6 +38,13 @@ export default function Settings() {
     } catch (x) {
       setBizMsg(x instanceof ApiError ? x.message : "Gagal.");
     }
+  }
+
+  function addMethod() {
+    setMethods((m) => [...m, { type: "rekening", label: "", value: "" }]);
+  }
+  function savePayment() {
+    updateBiz.mutate({ business_name: bizName.trim() || (businessName ?? ""), payment_methods: methods, qris_image_url: qris || null });
   }
 
   function update<K extends keyof SettingsT>(k: K, v: SettingsT[K]) {
@@ -80,6 +90,34 @@ export default function Settings() {
           <Button onClick={renameBiz} disabled={!bizName.trim()}>Simpan nama</Button>
         </div>
         {bizMsg && <p className="mt-2 text-sm text-brand-deep">{bizMsg}</p>}
+      </Card>
+
+      <Card>
+        <h2 className="mb-1 font-display text-base font-bold text-ink">Metode Pembayaran</h2>
+        <p className="mb-3 text-sm text-ink/55">Info ini dikirim otomatis ke pelanggan setelah pesanan selesai.</p>
+        {methods.map((m, i) => (
+          <div key={i} className="mb-2 flex gap-2">
+            <select
+              className={inputCls}
+              value={m.type}
+              onChange={(e) => setMethods((arr) => arr.map((x, j) => (j === i ? { ...x, type: e.target.value as PaymentMethod["type"] } : x)))}
+            >
+              <option value="rekening">Rekening</option>
+              <option value="ewallet">E-wallet</option>
+              <option value="qris">QRIS</option>
+            </select>
+            <input className={inputCls} placeholder="Label (BCA)" value={m.label}
+              onChange={(e) => setMethods((arr) => arr.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+            <input className={inputCls} placeholder="Nomor / a.n." value={m.value}
+              onChange={(e) => setMethods((arr) => arr.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))} />
+            <button type="button" onClick={() => setMethods((arr) => arr.filter((_, j) => j !== i))}>✕</button>
+          </div>
+        ))}
+        <Button variant="ghost" type="button" onClick={addMethod}>+ Tambah metode</Button>
+        <Field label="URL Gambar QRIS (opsional)">
+          <input className={inputCls} value={qris} onChange={(e) => setQris(e.target.value)} placeholder="https://..." />
+        </Field>
+        <Button onClick={savePayment} disabled={updateBiz.isPending}>{updateBiz.isPending ? "..." : "Simpan pembayaran"}</Button>
       </Card>
 
       {isLoading && <Spinner />}

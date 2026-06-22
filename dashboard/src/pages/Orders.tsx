@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useOrders, useUpdateOrderStatus } from "../lib/queries";
+import { useOrders, useUpdateOrderStatus, useSendOrderPayment } from "../lib/queries";
 import { fmtRp } from "../lib/format";
 import { ApiError } from "../lib/api";
 import { Button, Card, ErrorBox, PageTitle, Spinner } from "../components/ui";
@@ -24,6 +24,7 @@ export default function Orders() {
   const [filter, setFilter] = useState("semua");
   const { data, isLoading, error } = useOrders(filter === "semua" ? undefined : filter);
   const upd = useUpdateOrderStatus();
+  const sendPay = useSendOrderPayment();
   const set = (id: number, status: OrderStatus) => upd.mutate({ id, status });
 
   return (
@@ -83,15 +84,20 @@ export default function Orders() {
               </ul>
             )}
 
-            {(o.status === "baru" || o.status === "diproses") && (
-              <div className="mt-3 flex gap-2">
-                {o.status === "baru" && (
-                  <Button variant="secondary" onClick={() => set(o.id, "diproses")}>Proses</Button>
-                )}
-                <Button onClick={() => set(o.id, "selesai")}>Selesai</Button>
-                <Button variant="danger" onClick={() => set(o.id, "dibatalkan")}>Batal</Button>
-              </div>
-            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(o.status === "baru" || o.status === "diproses") && (
+                <>
+                  {o.status === "baru" && (
+                    <Button variant="secondary" onClick={() => set(o.id, "diproses")}>Proses</Button>
+                  )}
+                  <Button onClick={() => set(o.id, "selesai")}>Selesai</Button>
+                  <Button variant="danger" onClick={() => set(o.id, "dibatalkan")}>Batal</Button>
+                </>
+              )}
+              <Button variant="ghost" onClick={() => sendPay.mutate(o.id)} disabled={sendPay.isPending}>
+                {sendPay.isPending ? "..." : "Kirim info bayar"}
+              </Button>
+            </div>
           </Card>
         ))}
       </div>

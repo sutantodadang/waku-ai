@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
-import type { OrderStatus, Settings } from "./types";
+import type { OrderStatus, PaymentMethod, Settings } from "./types";
 
 export const keys = {
   summary: ["summary"] as const,
@@ -82,4 +82,17 @@ export function useEmbeddedSignup() {
     mutationFn: (d: { code: string; phone_number_id: string; waba_id: string }) => api.embeddedSignup(d),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.whatsapp }),
   });
+}
+
+export function useUpdateBusiness() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (d: { business_name: string; payment_methods?: PaymentMethod[]; qris_image_url?: string | null }) =>
+      api.updateBusiness(d),
+    onSuccess: () => qc.invalidateQueries(),
+  });
+}
+
+export function useSendOrderPayment() {
+  return useMutation({ mutationFn: (id: number) => api.sendOrderPayment(id) });
 }
