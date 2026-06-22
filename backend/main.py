@@ -86,6 +86,8 @@ logger = logging.getLogger("waku.backend")
 
 # ── AI service URL ──────────────────────────────────────────────────────────────
 AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
+# Shared secret sent to the AI service (X-Waku-Secret). Must match AI_SERVICE_SECRET there.
+AI_SERVICE_SECRET = os.getenv("AI_SERVICE_SECRET", "")
 
 # Human-readable display number of the platform WhatsApp (where owners send the
 # reverse-OTP code). Shown in the dashboard. e.g. "+1 555-648-9439".
@@ -356,9 +358,10 @@ async def _generate_ai_reply(
         "catalog": catalog,
     }
 
+    headers = {"X-Waku-Secret": AI_SERVICE_SECRET} if AI_SERVICE_SECRET else {}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(f"{AI_SERVICE_URL}/ai/reply", json=payload)
+            resp = await client.post(f"{AI_SERVICE_URL}/ai/reply", json=payload, headers=headers)
             resp.raise_for_status()
             reply = resp.json().get("reply", "")
             if reply:

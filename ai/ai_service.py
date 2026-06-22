@@ -8,13 +8,14 @@ Endpoints:
 - POST /ai/catalog-search— Search products in catalog
 """
 
+import hmac
 import logging
 import sys
 from datetime import datetime
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from config import settings
@@ -40,6 +41,14 @@ app = FastAPI(
     description="Bahasa Indonesia NLP & LLM Assistant for UMKM",
     version="1.0.0",
 )
+
+
+async def require_secret(x_waku_secret: str = Header(default="")) -> None:
+    """Gate /ai/* on a shared secret. No-op when AI_SERVICE_SECRET is unset (dev);
+    when set, the backend must send a matching X-Waku-Secret header."""
+    secret = settings.ai_service_secret
+    if secret and not hmac.compare_digest(x_waku_secret, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 # ──────────────────────────────────────────────
@@ -99,7 +108,7 @@ async def health():
     }
 
 
-@app.post("/ai/reply", response_model=ReplyResponse)
+@app.post("/ai/reply", response_model=ReplyResponse, dependencies=[Depends(require_secret)])
 async def ai_reply(request: ReplyRequest):
     """Generate an AI reply for an incoming message."""
     try:
@@ -134,7 +143,7 @@ async def ai_reply(request: ReplyRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/ai/extract-order", response_model=ExtractOrderResponse)
+@app.post("/ai/extract-order", response_model=ExtractOrderResponse, dependencies=[Depends(require_secret)])
 async def ai_extract_order(request: ExtractOrderRequest):
     """Extract structured order data from chat messages."""
     try:
@@ -149,7 +158,7 @@ async def ai_extract_order(request: ExtractOrderRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/ai/summarize")
+@app.post("/ai/summarize", dependencies=[Depends(require_secret)])
 async def ai_summarize(request: SummarizeRequest):
     """Generate a daily business summary in Bahasa Indonesia."""
     try:
@@ -164,7 +173,7 @@ async def ai_summarize(request: SummarizeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/ai/catalog-search")
+@app.post("/ai/catalog-search", dependencies=[Depends(require_secret)])
 async def ai_catalog_search(request: CatalogSearchRequest):
     """Search products in catalog matching the query."""
     try:

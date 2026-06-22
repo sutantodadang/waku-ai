@@ -18,6 +18,8 @@ class Settings:
 
     # Service
     service_port: int = int(os.getenv("AI_SERVICE_PORT", "8001"))
+    # Shared secret the backend must send (X-Waku-Secret). Empty = open (dev only).
+    ai_service_secret: str = os.getenv("AI_SERVICE_SECRET", "")
 
     # Conversation
     max_context_messages: int = int(os.getenv("MAX_CONTEXT_MESSAGES", "20"))
