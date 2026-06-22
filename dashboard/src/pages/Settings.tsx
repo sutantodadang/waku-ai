@@ -5,6 +5,10 @@ import { authStore, useAuth } from "../lib/auth";
 import { Button, Card, ErrorBox, Field, inputCls, PageTitle, Spinner } from "../components/ui";
 import type { FAQItem, Settings as SettingsT } from "../lib/types";
 
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <h2 className="mb-3 font-display text-base font-bold text-ink">{children}</h2>;
+}
+
 export default function Settings() {
   const { data, isLoading, error } = useSettings();
   const save = useUpdateSettings();
@@ -53,47 +57,55 @@ export default function Settings() {
   }
 
   return (
-    <div>
-      <PageTitle>⚙️ Pengaturan Auto-Balas</PageTitle>
+    <div className="space-y-4">
+      <PageTitle>Auto-Balas</PageTitle>
 
-      <Card className="mb-4">
-        <h3 className="mb-2 font-bold">🏪 Profil Bisnis</h3>
-        <Field label="Nama Bisnis">
+      <Card>
+        <SectionTitle>Profil bisnis</SectionTitle>
+        <Field label="Nama bisnis">
           <input className={inputCls} value={bizName} onChange={(e) => setBizName(e.target.value)} />
         </Field>
-        <div className="mt-2">
-          <Button onClick={renameBiz} disabled={!bizName.trim()}>💾 Simpan Nama</Button>
+        <div className="mt-3">
+          <Button onClick={renameBiz} disabled={!bizName.trim()}>Simpan nama</Button>
         </div>
-        {bizMsg && <p className="mt-2 text-sm text-gray-600">{bizMsg}</p>}
+        {bizMsg && <p className="mt-2 text-sm text-brand-deep">{bizMsg}</p>}
       </Card>
 
       {isLoading && <Spinner />}
       {error && <ErrorBox message={(error as ApiError).message} />}
       {form && (
-        <form onSubmit={submit} className="space-y-3">
+        <form onSubmit={submit} className="space-y-4">
           <Card>
-            <label className="flex items-center justify-between">
-              <span className="font-semibold">🤖 Aktifkan Auto-Balas</span>
-              <input
-                type="checkbox"
-                className="h-5 w-9 accent-orange"
-                checked={form.auto_reply_enabled}
-                onChange={(e) => update("auto_reply_enabled", e.target.checked)}
-              />
+            <label className="flex items-center justify-between gap-3">
+              <span>
+                <span className="block font-semibold text-ink">Balas otomatis</span>
+                <span className="block text-sm text-ink/50">Waku jawab pelanggan saat kamu sibuk.</span>
+              </span>
+              <span className="relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  className="peer sr-only"
+                  checked={form.auto_reply_enabled}
+                  onChange={(e) => update("auto_reply_enabled", e.target.checked)}
+                />
+                <span className="absolute inset-0 rounded-full bg-ink/15 transition peer-checked:bg-brand" />
+                <span className="absolute left-0.5 h-6 w-6 rounded-full bg-white shadow transition peer-checked:translate-x-5" />
+              </span>
             </label>
           </Card>
 
           <Card className="space-y-3">
-            <Field label="💬 Pesan Sambutan">
+            <SectionTitle>Pesan</SectionTitle>
+            <Field label="Pesan sambutan">
               <textarea
-                className={inputCls}
+                className={`${inputCls} min-h-[4rem] py-2`}
                 value={form.greeting_message}
                 onChange={(e) => update("greeting_message", e.target.value)}
                 placeholder="Halo! Ada yang bisa Waku bantu?"
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="🕐 Buka">
+              <Field label="Jam buka">
                 <input
                   className={inputCls}
                   value={form.business_hours.open}
@@ -101,7 +113,7 @@ export default function Settings() {
                   placeholder="08:00"
                 />
               </Field>
-              <Field label="🕐 Tutup">
+              <Field label="Jam tutup">
                 <input
                   className={inputCls}
                   value={form.business_hours.close}
@@ -110,7 +122,7 @@ export default function Settings() {
                 />
               </Field>
             </div>
-            <Field label="🌙 Pesan di Luar Jam Kerja">
+            <Field label="Pesan di luar jam kerja">
               <input
                 className={inputCls}
                 value={form.after_hours_message}
@@ -121,18 +133,18 @@ export default function Settings() {
 
           <Card className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="font-bold">❓ Pertanyaan Umum (FAQ)</h3>
+              <SectionTitle>Pertanyaan umum</SectionTitle>
               <button
                 type="button"
                 onClick={() => update("faq", [...form.faq, { question: "", answer: "" }])}
-                className="rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold"
+                className="-mt-1 min-h-[2rem] rounded-full bg-ink/5 px-3 text-sm font-semibold text-ink/70 transition active:scale-[0.98]"
               >
-                ➕ Tambah
+                + Tambah
               </button>
             </div>
-            {form.faq.length === 0 && <p className="text-sm text-gray-500">Belum ada FAQ.</p>}
+            {form.faq.length === 0 && <p className="text-sm text-ink/50">Belum ada pertanyaan umum.</p>}
             {form.faq.map((q, i) => (
-              <div key={i} className="space-y-2 rounded-xl bg-gray-50 p-3">
+              <div key={i} className="space-y-2 rounded-2xl bg-paper p-3 ring-1 ring-ink/[0.05]">
                 <input
                   className={inputCls}
                   value={q.question}
@@ -140,7 +152,7 @@ export default function Settings() {
                   placeholder="Pertanyaan"
                 />
                 <textarea
-                  className={inputCls}
+                  className={`${inputCls} min-h-[3.5rem] py-2`}
                   value={q.answer}
                   onChange={(e) => setFaq(i, { answer: e.target.value })}
                   placeholder="Jawaban"
@@ -148,7 +160,7 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={() => update("faq", form.faq.filter((_, idx) => idx !== i))}
-                  className="text-sm text-red-600"
+                  className="text-sm font-medium text-red-600"
                 >
                   Hapus
                 </button>
@@ -156,8 +168,12 @@ export default function Settings() {
             ))}
           </Card>
 
-          {saved && <div className="rounded-xl bg-green-50 p-3 text-sm text-green-700">✅ Pengaturan disimpan!</div>}
-          <Button type="submit" disabled={save.isPending}>{save.isPending ? "..." : "💾 Simpan Pengaturan"}</Button>
+          {saved && (
+            <div className="rounded-2xl bg-brand-tint p-3 text-sm font-medium text-brand-deep ring-1 ring-brand/15">
+              Pengaturan tersimpan.
+            </div>
+          )}
+          <Button type="submit" disabled={save.isPending}>{save.isPending ? "..." : "Simpan pengaturan"}</Button>
         </form>
       )}
     </div>

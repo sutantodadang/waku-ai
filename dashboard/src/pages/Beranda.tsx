@@ -1,56 +1,82 @@
-import { Link } from "@tanstack/react-router";
 import { useSummary } from "../lib/queries";
-import { fmtRp, greeting } from "../lib/format";
+import { fmtRp, greeting, todayLabel } from "../lib/format";
 import { Card, ErrorBox, Spinner } from "../components/ui";
 import { ApiError } from "../lib/api";
 
-function Stat({ color, value, label }: { color: string; value: string; label: string }) {
+function HeroMetric({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
   return (
-    <div className={`rounded-2xl p-4 text-white shadow-sm ${color}`}>
-      <p className="text-2xl font-extrabold leading-tight">{value}</p>
-      <p className="text-sm opacity-90">{label}</p>
+    <div>
+      <p className={`tnum font-display text-xl font-extrabold leading-none ${accent ? "text-accent" : "text-white"}`}>
+        {value}
+      </p>
+      <p className="mt-1 text-xs text-white/55">{label}</p>
     </div>
   );
 }
 
 export default function Beranda() {
   const { data, isLoading, error } = useSummary();
+
   return (
-    <div>
-      <div className="mb-2 text-center">
-        <div className="text-lg font-extrabold">Selamat Datang di Waku 🤖</div>
-        <div className="text-sm text-gray-500">Asisten WhatsApp pintar untuk usaha Anda</div>
-      </div>
-      <h3 className="mb-3 text-lg font-bold">{greeting()}</h3>
+    <div className="space-y-5">
+      <header>
+        <p className="text-sm font-medium capitalize text-ink/55">{todayLabel()}</p>
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-ink">{greeting()} 👋</h1>
+      </header>
 
       {isLoading && <Spinner />}
       {error && <ErrorBox message={(error as ApiError).message} />}
+
       {data && (
         <>
-          <div className="grid grid-cols-2 gap-3">
-            <Stat color="bg-gradient-to-br from-teal to-teal-dark" value={String(data.orders_today)} label="📦 Pesanan Hari Ini" />
-            <Stat color="bg-gradient-to-br from-orange to-orange-bg" value={fmtRp(data.revenue_today)} label="💰 Pendapatan" />
-            <Stat color="bg-gradient-to-br from-green-600 to-green-800" value={String(data.messages_handled)} label="💬 Dibalas Otomatis" />
-            <Stat color={data.pending_orders > 0 ? "bg-red-600" : "bg-teal"} value={String(data.pending_orders)} label="⏳ Menunggu" />
-          </div>
+          {/* Signature: the day's takings, framed like a nota total — every
+              metric the owner checks lives on this one ledger card. */}
+          <section className="rounded-[24px] bg-ink p-5 text-white shadow-[0_8px_24px_rgba(12,31,23,0.18)]">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/55">Pendapatan hari ini</p>
+            <p className="tnum mt-1 font-display text-[2.6rem] font-extrabold leading-none text-gold">
+              {fmtRp(data.revenue_today)}
+            </p>
+            <div className="tear my-4 text-white" />
+            <div className="grid grid-cols-3 gap-2">
+              <HeroMetric value={String(data.orders_today)} label="Pesanan" />
+              <HeroMetric value={String(data.messages_handled)} label="Dibalas otomatis" />
+              <HeroMetric
+                value={String(data.pending_orders)}
+                label="Menunggu"
+                accent={data.pending_orders > 0}
+              />
+            </div>
+          </section>
 
-          <h3 className="my-3 text-lg font-bold">🏆 Produk Terlaris Hari Ini</h3>
-          {data.top_products.length === 0 ? (
-            <Card><p className="text-sm text-gray-500">Belum ada data penjualan hari ini. 🛍️</p></Card>
-          ) : (
-            data.top_products.map((p) => (
-              <Card key={p.name} className="mb-2 flex items-center justify-between">
-                <span className="font-semibold">{p.name}</span>
-                <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">{p.count} terjual</span>
+          <section>
+            <h2 className="mb-2 font-display text-base font-bold text-ink">Terlaris hari ini</h2>
+            {data.top_products.length === 0 ? (
+              <Card>
+                <p className="text-sm text-ink/55">Belum ada penjualan hari ini. Pesanan yang masuk akan muncul di sini.</p>
               </Card>
-            ))
-          )}
-
-          <h3 className="my-3 text-lg font-bold">⚡ Aksi Cepat</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <Link to="/orders" className="rounded-full bg-gray-100 py-2 text-center text-sm font-semibold text-gray-700">📋 Lihat Pesanan</Link>
-            <Link to="/catalog" className="rounded-full bg-gray-100 py-2 text-center text-sm font-semibold text-gray-700">🏪 Atur Katalog</Link>
-          </div>
+            ) : (
+              <Card className="!p-2">
+                <ul>
+                  {data.top_products.map((p, i) => (
+                    <li
+                      key={p.name}
+                      className="flex items-center gap-3 px-2 py-2.5 not-last:border-b not-last:border-ink/[0.06]"
+                    >
+                      <span
+                        className={`tnum grid h-7 w-7 shrink-0 place-items-center rounded-lg text-sm font-bold ${
+                          i === 0 ? "bg-gold/20 text-[#9a7400]" : "bg-ink/5 text-ink/50"
+                        }`}
+                      >
+                        {i + 1}
+                      </span>
+                      <span className="flex-1 truncate font-semibold text-ink">{p.name}</span>
+                      <span className="tnum text-sm font-semibold text-ink/55">{p.count} terjual</span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
+          </section>
         </>
       )}
     </div>

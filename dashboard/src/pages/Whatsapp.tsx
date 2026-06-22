@@ -109,44 +109,63 @@ export default function Whatsapp() {
   }
 
   return (
-    <div>
-      <PageTitle>📲 Koneksi WhatsApp</PageTitle>
+    <div className="space-y-4">
+      <PageTitle>Koneksi WhatsApp</PageTitle>
       {isLoading && <Spinner />}
       {error && <ErrorBox message={(error as ApiError).message} />}
-      {data &&
-        (data.is_connected ? (
-          <Card className="mb-4">
-            <div className="rounded-xl bg-green-50 p-3 text-sm text-green-700">
-              ✅ Terhubung — phone_number_id: {data.phone_number_id}
-            </div>
-          </Card>
-        ) : (
-          <Card className="mb-4">
-            <div className="rounded-xl bg-yellow-50 p-3 text-sm text-yellow-800">
-              ⚠️ Belum terhubung. Nomor WhatsApp bisnis belum bisa membalas pelanggan.
-            </div>
-          </Card>
-        ))}
 
-      <Card className="mb-4">
-        <p className="mb-3 text-sm text-gray-500">
-          Cara cepat: hubungkan nomor WhatsApp bisnis Anda lewat <b>Embedded Signup</b> Meta (sekali klik).
-        </p>
-        {err && <ErrorBox message={err} />}
-        {ok && <div className="mb-3 rounded-xl bg-green-50 p-3 text-sm text-green-700">✅ WhatsApp berhasil dihubungkan!</div>}
-        <Button onClick={launchEmbeddedSignup} disabled={!META_APP_ID || signup.isPending}>
-          {signup.isPending ? "..." : "🟢 Hubungkan via Meta"}
+      {data && (
+        <div
+          className={`flex items-center gap-3 rounded-2xl p-4 ring-1 ${
+            data.is_connected ? "bg-brand-tint ring-brand/15" : "bg-gold/10 ring-gold/25"
+          }`}
+        >
+          <span
+            className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${
+              data.is_connected ? "bg-brand text-white" : "bg-gold/25 text-[#9a7400]"
+            }`}
+            aria-hidden
+          >
+            {data.is_connected ? "✓" : "!"}
+          </span>
+          <div className="min-w-0 text-sm">
+            {data.is_connected ? (
+              <>
+                <p className="font-semibold text-brand-deep">Terhubung</p>
+                <p className="truncate text-ink/55">ID nomor: {data.phone_number_id}</p>
+              </>
+            ) : (
+              <>
+                <p className="font-semibold text-ink">Belum terhubung</p>
+                <p className="text-ink/55">Nomor bisnis belum bisa membalas pelanggan.</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {err && <ErrorBox message={err} />}
+      {ok && (
+        <div className="rounded-2xl bg-brand-tint p-3 text-sm font-medium text-brand-deep ring-1 ring-brand/15">
+          WhatsApp berhasil dihubungkan.
+        </div>
+      )}
+
+      <Card>
+        <h2 className="mb-1 font-display text-base font-bold text-ink">Hubungkan via Meta</h2>
+        <p className="mb-3 text-sm text-ink/55">Cara cepat — sambungkan nomor WhatsApp bisnismu sekali klik lewat Meta.</p>
+        <Button variant="secondary" onClick={launchEmbeddedSignup} disabled={!META_APP_ID || signup.isPending}>
+          {signup.isPending ? "..." : "Hubungkan via Meta"}
         </Button>
         {!META_APP_ID && (
-          <p className="mt-2 text-xs text-gray-400">Set VITE_META_APP_ID & VITE_META_CONFIG_ID untuk mengaktifkan.</p>
+          <p className="mt-2 text-xs text-ink/45">Set VITE_META_APP_ID & VITE_META_CONFIG_ID untuk mengaktifkan.</p>
         )}
-        {META_APP_ID && !sdkReady && <p className="mt-2 text-xs text-gray-400">Memuat SDK Meta…</p>}
+        {META_APP_ID && !sdkReady && <p className="mt-2 text-xs text-ink/45">Memuat SDK Meta…</p>}
       </Card>
 
       <Card>
-        <p className="mb-3 text-sm text-gray-500">
-          Alternatif (manual / test): masukkan kredensial Cloud API.
-        </p>
+        <h2 className="mb-1 font-display text-base font-bold text-ink">Hubungkan manual</h2>
+        <p className="mb-3 text-sm text-ink/55">Alternatif untuk testing — masukkan kredensial Cloud API.</p>
         <form onSubmit={submit} className="space-y-3">
           <Field label="Phone Number ID">
             <input className={inputCls} value={pnid} onChange={(e) => setPnid(e.target.value)} placeholder="dari Meta API Setup" />
@@ -157,7 +176,9 @@ export default function Whatsapp() {
           <Field label="WABA ID (opsional)">
             <input className={inputCls} value={waba} onChange={(e) => setWaba(e.target.value)} />
           </Field>
-          <Button type="submit" disabled={connect.isPending}>{connect.isPending ? "..." : "🔗 Hubungkan Manual"}</Button>
+          <Button variant="ghost" type="submit" disabled={connect.isPending}>
+            {connect.isPending ? "..." : "Hubungkan manual"}
+          </Button>
         </form>
       </Card>
     </div>
