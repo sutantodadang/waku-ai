@@ -69,6 +69,7 @@ class ReplyResponse(BaseModel):
     intent: str = Field(default="UNKNOWN", description="Detected intent")
     session_id: str = Field(default="default")
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+    order: Optional[dict] = Field(default=None, description="Finalised order on close; null otherwise")
 
 
 class ExtractOrderRequest(BaseModel):
@@ -143,10 +144,13 @@ async def ai_reply(request: ReplyRequest):
             catalog_names = [item.get("name", "") for item in request.catalog]
         analysis = analyze_message(request.incoming_message, catalog_items=catalog_names)
 
+        conv = conversation_manager.get(request.session_id)
+        closed = conv.closed_order if conv else None
         return ReplyResponse(
             reply=reply,
             intent=analysis["intent"],
             session_id=request.session_id,
+            order=closed,
         )
     except Exception as e:
         logger.exception(f"Error in /ai/reply: {e}")
