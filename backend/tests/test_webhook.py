@@ -112,3 +112,26 @@ def test_order_auto_extracted_from_message(client, monkeypatch):
 
     orders = client.get("/api/orders", headers=auth(t["access_token"])).json()
     assert len(orders) == 1
+
+
+def test_offcatalog_item_creates_no_order(client, monkeypatch):
+    """With a catalog, an item that isn't in it must not become a phantom order."""
+    async def fake_send(*a, **k):
+        return {"ok": True}
+
+    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(main, "AI_SERVICE_URL", "http://127.0.0.1:9")
+
+    t = register(client)
+    connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
+    client.post("/api/products", headers=auth(t["access_token"]), json={"name": "Nasi Goreng", "price": 14000})
+
+    # Off-catalog request → no order created.
+    customer_message(client, "PNID_T", "628123", "aku mau pesan 1 motor")
+    assert client.get("/api/orders", headers=auth(t["access_token"])).json() == []
+
+    # Real catalog item → one order with the real total.
+    customer_message(client, "PNID_T", "628123", "pesan 2 nasi goreng")
+    orders = client.get("/api/orders", headers=auth(t["access_token"])).json()
+    assert len(orders) == 1
+    assert orders[0]["total"] == 28000
