@@ -278,3 +278,16 @@ class UploadResponse(BaseModel):
 class SendPaymentResponse(BaseModel):
     """POST /api/orders/{id}/send-payment response."""
     sent: bool
+
+
+# ── Staff ────────────────────────────────────────────────────────────────────────
+class StaffCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class StaffResponse(BaseModel):
+    id: int
+    name: str
+    active: bool
+
+    model_config = {"from_attributes": True}

@@ -28,7 +28,7 @@ from auth import (
     verify_password,
 )
 from database import async_session_factory, close_db, get_db, init_db
-from models import Business, Customer, Message, OTPVerification, Order, Product, User
+from models import Business, Customer, Message, OTPVerification, Order, Product, Staff, User
 from schemas import (
     BusinessProfileUpdate,
     BusinessRegister,
@@ -53,6 +53,8 @@ from schemas import (
     SettingsUpdate,
     TokenResponse,
     SendPaymentResponse,
+    StaffCreate,
+    StaffResponse,
     UploadResponse,
     UserLogin,
     UserRegister,
@@ -801,6 +803,49 @@ async def business_summary(
     target_date = date.fromisoformat(day) if day else date.today()
     summary = await get_daily_summary(session, business_id, day=target_date)
     return summary
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  STAFF API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/staff", response_model=list[StaffResponse])
+async def list_staff(
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    rows = (await session.execute(
+        select(Staff).where(Staff.business_id == business.id, Staff.active == True)  # noqa: E712
+    )).scalars().all()
+    return list(rows)
+
+
+@app.post("/api/staff", response_model=StaffResponse)
+async def create_staff(
+    body: StaffCreate,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    staff = Staff(business_id=business.id, name=body.name, active=True)
+    session.add(staff)
+    await session.flush()
+    return staff
+
+
+@app.delete("/api/staff/{staff_id}")
+async def delete_staff(
+    staff_id: int,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    staff = (await session.execute(
+        select(Staff).where(Staff.id == staff_id, Staff.business_id == business.id)
+    )).scalar_one_or_none()
+    if staff is None:
+        raise HTTPException(status_code=404, detail="Staff not found for this business.")
+    staff.active = False  # soft-delete keeps historical bookings' staff_id valid
+    await session.flush()
+    return {"ok": True}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
