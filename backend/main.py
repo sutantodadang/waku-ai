@@ -28,8 +28,10 @@ from auth import (
     verify_password,
 )
 from database import async_session_factory, close_db, get_db, init_db
-from models import Business, Customer, Message, OTPVerification, Order, Product, Staff, User
+from models import Booking, Business, Customer, Message, OTPVerification, Order, Product, Staff, User
 from schemas import (
+    BookingResponse,
+    BookingUpdate,
     BusinessProfileUpdate,
     BusinessRegister,
     BusinessResponse,
@@ -88,6 +90,7 @@ from services.order_service import (
 from services.embeddings import embed_product
 from services.retrieval import select_relevant_products
 from services.payment import send_payment_info
+from services.booking_service import check_booking_clash
 
 load_dotenv()
 
@@ -1234,3 +1237,74 @@ async def dashboard_upload_image(file: UploadFile = File(...)):
 async def health():
     """Simple health-check endpoint."""
     return {"status": "healthy", "service": "waku-backend"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  BOOKINGS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _maybe_notify_booking_status(session, business, booking, customer, new_status) -> None:
+    """Placeholder — Task 6 implements booking status→WA notify + payment."""
+    return
+
+
+async def _booking_to_dict(session: AsyncSession, b: Booking, customer_name: str) -> dict:
+    clash = bool(await check_booking_clash(session, b.business_id, b.staff_id, b.scheduled_at, b.duration_minutes)) \
+        if b.status in ("requested", "confirmed") else False
+    return {
+        "id": b.id, "customer_name": customer_name, "staff_id": b.staff_id,
+        "items": b.items or [], "total": b.total, "deposit_amount": b.deposit_amount,
+        "scheduled_at": b.scheduled_at, "duration_minutes": b.duration_minutes,
+        "status": b.status, "notes": b.notes, "clash": clash, "created_at": b.created_at,
+    }
+
+
+@app.get("/api/bookings", response_model=list[BookingResponse])
+async def list_bookings(
+    status: Optional[str] = Query(None),
+    date: Optional[str] = Query(None),
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    stmt = (
+        select(Booking, Customer)
+        .join(Customer, Booking.customer_id == Customer.id)
+        .where(Booking.business_id == business.id)
+        .order_by(Booking.scheduled_at.asc().nullslast(), Booking.created_at.desc())
+    )
+    if status:
+        stmt = stmt.where(Booking.status == status)
+    if date:  # YYYY-MM-DD
+        import datetime as _dt
+        day = _dt.date.fromisoformat(date)
+        start = _dt.datetime.combine(day, _dt.time.min)
+        end = _dt.datetime.combine(day, _dt.time.max)
+        stmt = stmt.where(Booking.scheduled_at >= start, Booking.scheduled_at <= end)
+    rows = (await session.execute(stmt)).all()
+    return [await _booking_to_dict(session, b, c.name or c.phone_number) for b, c in rows]
+
+
+@app.patch("/api/bookings/{booking_id}", response_model=BookingResponse)
+async def update_booking(
+    booking_id: int,
+    body: BookingUpdate,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    row = (await session.execute(
+        select(Booking, Customer).join(Customer, Booking.customer_id == Customer.id)
+        .where(Booking.id == booking_id, Booking.business_id == business.id)
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Booking not found for this business.")
+    booking, customer = row
+    if body.scheduled_at is not None:
+        booking.scheduled_at = body.scheduled_at
+    if body.staff_id is not None:
+        booking.staff_id = body.staff_id
+    if body.status is not None:
+        booking.status = body.status
+    await session.flush()
+    # Task 6 wires the status→WA notify + payment here.
+    await _maybe_notify_booking_status(session, business, booking, customer, body.status)
+    return await _booking_to_dict(session, booking, customer.name or customer.phone_number)
