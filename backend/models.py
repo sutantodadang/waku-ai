@@ -74,6 +74,19 @@ class Customer(Base):
     name: Mapped[Optional[str]] = mapped_column(String(255))
     business_id: Mapped[int] = mapped_column(Integer, ForeignKey("businesses.id"), nullable=False)
 
+    # ── Kenal Langganan: owner-entered ──
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    is_regular_override: Mapped[Optional[bool]] = mapped_column(Boolean)
+
+    # ── Kenal Langganan: cached stats (recomputed from orders) ──
+    order_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_spent: Mapped[float] = mapped_column(Float, default=0.0)
+    last_order_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    top_items: Mapped[list] = mapped_column(JSON, default=list)
+    avg_cadence_days: Mapped[Optional[float]] = mapped_column(Float)
+    stats_updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+
     business: Mapped["Business"] = relationship(back_populates="customers")
     messages: Mapped[list["Message"]] = relationship(back_populates="customer", cascade="all, delete-orphan")
     orders: Mapped[list["Order"]] = relationship(back_populates="customer", cascade="all, delete-orphan")

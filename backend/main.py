@@ -34,6 +34,9 @@ from schemas import (
     BusinessRegister,
     BusinessResponse,
     ConnectWhatsApp,
+    CustomerDetailResponse,
+    CustomerResponse,
+    CustomerUpdate,
     DashboardSummary,
     DailySummary,
     EmbeddedSignup,
@@ -72,6 +75,8 @@ from services.order_service import (
     get_daily_summary,
     get_or_create_customer,
     get_orders_for_business,
+    is_regular,
+    recompute_customer_stats,
     save_message,
 )
 
@@ -155,6 +160,32 @@ def _order_to_dashboard_dict(order: Order, customer_name: str) -> dict:
         "items": order.items or [],
         "created_at": order.created_at,
     }
+
+
+def _build_customer_card(cust: Customer) -> Optional[dict]:
+    """Compact personalisation context for the AI. Returns None for an unknown
+    customer (no real name, no orders, no notes/tags) so the AI never fabricates."""
+    name = (cust.name or "").strip()
+    known_name = bool(name) and name != cust.phone_number
+    if (cust.order_count or 0) == 0 and not known_name and not cust.notes and not (cust.tags or []):
+        return None
+
+    card: dict = {"order_count": cust.order_count or 0, "is_regular": is_regular(cust)}
+    if known_name:
+        card["name"] = name
+    if cust.top_items:
+        card["usual_items"] = [t["name"] for t in cust.top_items]
+    if cust.last_order_at:
+        card["last_order_at"] = cust.last_order_at.isoformat()
+        if cust.avg_cadence_days:
+            due = cust.last_order_at + timedelta(days=cust.avg_cadence_days)
+            card["reorder_due"] = datetime.utcnow() > due
+            card["avg_cadence_days"] = round(cust.avg_cadence_days, 1)
+    if cust.notes:
+        card["notes"] = cust.notes
+    if cust.tags:
+        card["tags"] = cust.tags
+    return card
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -264,8 +295,12 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
             if order_items:
                 order = await create_order(session, business.id, customer.id, order_items)
                 logger.info("Order #%d auto-extracted from message.", order.id)
+                try:
+                    await recompute_customer_stats(session, customer.id)
+                except Exception:
+                    logger.exception("Failed to recompute stats for customer %d", customer.id)
 
-            reply = await _generate_ai_reply(session, business, customer.phone_number, text, order_items or None)
+            reply = await _generate_ai_reply(session, business, customer.phone_number, text, order_items or None, customer=customer)
             reply = f"{reply}{AI_REPLY_FOOTER}"
 
             await send_message(
@@ -341,6 +376,7 @@ async def _generate_ai_reply(
     session_id: str,
     message_text: str,
     extracted_order: Optional[list[dict]] = None,
+    customer: Optional[Customer] = None,
 ) -> str:
     """
     Forward the message to the AI service (/ai/reply), scoped to this business's
@@ -358,6 +394,11 @@ async def _generate_ai_reply(
         "business_context": {"store_name": business.business_name, "owner_name": ""},
         "catalog": catalog,
     }
+
+    if customer is not None:
+        card = _build_customer_card(customer)
+        if card is not None:
+            payload["customer"] = card
 
     headers = {"X-Waku-Secret": AI_SERVICE_SECRET} if AI_SERVICE_SECRET else {}
     try:
@@ -794,7 +835,108 @@ async def dashboard_update_order_status(
 
     order.status = db_status
     await session.flush()
+    try:
+        await recompute_customer_stats(session, order.customer_id)
+    except Exception:
+        logger.exception("Failed to recompute stats for customer %d", order.customer_id)
     return _order_to_dashboard_dict(order, customer.name or customer.phone_number)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CUSTOMERS API (Kenal Langganan)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _customer_to_dict(c: Customer) -> dict:
+    return {
+        "id": c.id,
+        "name": None if (c.name or "") == c.phone_number else c.name,
+        "phone_number": c.phone_number,
+        "is_regular": is_regular(c),
+        "order_count": c.order_count or 0,
+        "total_spent": c.total_spent or 0.0,
+        "last_order_at": c.last_order_at,
+        "top_items": c.top_items or [],
+        "tags": c.tags or [],
+    }
+
+
+@app.get("/api/customers", response_model=list[CustomerResponse])
+async def dashboard_list_customers(
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """GET /api/customers — customers for this business, most recent first."""
+    stmt = (
+        select(Customer)
+        .where(Customer.business_id == business.id)
+        .order_by(Customer.last_order_at.desc().nullslast(), Customer.id.desc())
+    )
+    customers = (await session.execute(stmt)).scalars().all()
+    return [_customer_to_dict(c) for c in customers]
+
+
+@app.get("/api/customers/{customer_id}", response_model=CustomerDetailResponse)
+async def dashboard_get_customer(
+    customer_id: int,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """GET /api/customers/{id} — profile + recent orders."""
+    cust = (await session.execute(
+        select(Customer).where(Customer.id == customer_id, Customer.business_id == business.id)
+    )).scalar_one_or_none()
+    if cust is None:
+        raise HTTPException(status_code=404, detail="Customer not found for this business.")
+
+    orders = (await session.execute(
+        select(Order).where(Order.customer_id == cust.id).order_by(Order.created_at.desc()).limit(10)
+    )).scalars().all()
+
+    data = _customer_to_dict(cust)
+    data.update({
+        "notes": cust.notes,
+        "is_regular_override": cust.is_regular_override,
+        "avg_cadence_days": cust.avg_cadence_days,
+        "recent_orders": [_order_to_dashboard_dict(o, cust.name or cust.phone_number) for o in orders],
+    })
+    return data
+
+
+@app.patch("/api/customers/{customer_id}", response_model=CustomerDetailResponse)
+async def dashboard_update_customer(
+    customer_id: int,
+    body: CustomerUpdate,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """PATCH /api/customers/{id} — update owner notes / tags / loyalty override."""
+    cust = (await session.execute(
+        select(Customer).where(Customer.id == customer_id, Customer.business_id == business.id)
+    )).scalar_one_or_none()
+    if cust is None:
+        raise HTTPException(status_code=404, detail="Customer not found for this business.")
+
+    if body.tags is not None:
+        if len(body.tags) > 10 or any(len(t) > 60 for t in body.tags):
+            raise HTTPException(status_code=422, detail="Maks 10 tag, tiap tag ≤ 60 karakter.")
+        cust.tags = body.tags
+    if body.notes is not None:
+        cust.notes = body.notes
+    if body.is_regular_override is not None:
+        cust.is_regular_override = body.is_regular_override
+    await session.flush()
+
+    orders = (await session.execute(
+        select(Order).where(Order.customer_id == cust.id).order_by(Order.created_at.desc()).limit(10)
+    )).scalars().all()
+    data = _customer_to_dict(cust)
+    data.update({
+        "notes": cust.notes,
+        "is_regular_override": cust.is_regular_override,
+        "avg_cadence_days": cust.avg_cadence_days,
+        "recent_orders": [_order_to_dashboard_dict(o, cust.name or cust.phone_number) for o in orders],
+    })
+    return data
 
 
 @app.get("/api/products", response_model=list[ProductResponse])

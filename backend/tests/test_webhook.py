@@ -135,3 +135,21 @@ def test_offcatalog_item_creates_no_order(client, monkeypatch):
     orders = client.get("/api/orders", headers=auth(t["access_token"])).json()
     assert len(orders) == 1
     assert orders[0]["total"] == 28000
+
+
+def test_order_updates_customer_stats(client, monkeypatch):
+    async def fake_send(*a, **k):
+        return {"ok": True}
+
+    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(main, "AI_SERVICE_URL", "http://127.0.0.1:9")
+
+    t = register(client)
+    connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
+    client.post("/api/products", headers=auth(t["access_token"]), json={"name": "Nasi Goreng", "price": 14000})
+
+    customer_message(client, "PNID_T", "628777", "pesan 2 nasi goreng")
+    rows = client.get("/api/customers", headers=auth(t["access_token"])).json()
+    assert len(rows) == 1
+    assert rows[0]["order_count"] == 1
+    assert rows[0]["total_spent"] == 28000

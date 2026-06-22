@@ -1,5 +1,7 @@
 import { authStore } from "./auth";
 import type {
+  Customer,
+  CustomerDetail,
   DashboardSummary,
   OTPRequestResponse,
   Order,
@@ -93,6 +95,12 @@ export const api = {
     req<WhatsAppConnection>("/api/whatsapp/connect", { method: "PUT", ...body(d) }),
   embeddedSignup: (d: { code: string; phone_number_id: string; waba_id: string }) =>
     req<WhatsAppConnection>("/api/whatsapp/embedded-signup", { method: "POST", ...body(d) }),
+
+  // ── Customers ──
+  customers: () => req<Customer[]>("/api/customers"),
+  customer: (id: number) => req<CustomerDetail>(`/api/customers/${id}`),
+  updateCustomer: (id: number, d: { notes?: string; tags?: string[]; is_regular_override?: boolean }) =>
+    req<CustomerDetail>(`/api/customers/${id}`, { method: "PATCH", ...body(d) }),
 
   // ── Upload (multipart) ──
   async upload(file: File): Promise<string> {

@@ -55,6 +55,18 @@ _BUSINESS_NEW_COLUMNS: dict[str, str] = {
     "is_connected": "BOOLEAN DEFAULT 0 NOT NULL",
 }
 
+_CUSTOMER_NEW_COLUMNS: dict[str, str] = {
+    "notes": "TEXT",
+    "tags": "JSON",
+    "is_regular_override": "BOOLEAN",
+    "order_count": "INTEGER DEFAULT 0",
+    "total_spent": "FLOAT DEFAULT 0",
+    "last_order_at": "DATETIME",
+    "top_items": "JSON",
+    "avg_cadence_days": "FLOAT",
+    "stats_updated_at": "DATETIME",
+}
+
 
 def _run_migrations(sync_conn) -> None:
     """Idempotent schema top-up for existing databases (SQLite)."""
@@ -73,6 +85,13 @@ def _run_migrations(sync_conn) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_businesses_phone_number_id "
         "ON businesses(phone_number_id)"
     )
+    # customers: Kenal Langganan columns
+    if "customers" in insp.get_table_names():
+        cust_existing = {c["name"] for c in insp.get_columns("customers")}
+        for name, ddl in _CUSTOMER_NEW_COLUMNS.items():
+            if name not in cust_existing:
+                sync_conn.exec_driver_sql(f"ALTER TABLE customers ADD COLUMN {name} {ddl}")
+                logger.info("Migration: added customers.%s", name)
 
 
 async def init_db() -> None:

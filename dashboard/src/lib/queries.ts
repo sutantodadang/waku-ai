@@ -8,6 +8,8 @@ export const keys = {
   products: ["products"] as const,
   settings: ["settings"] as const,
   whatsapp: ["whatsapp"] as const,
+  customers: ["customers"] as const,
+  customer: (id: number) => ["customer", id] as const,
 };
 
 export const useSummary = () => useQuery({ queryKey: keys.summary, queryFn: api.summary });
@@ -48,6 +50,21 @@ export function useUpdateSettings() {
   return useMutation({
     mutationFn: (d: Partial<Settings>) => api.updateSettings(d),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.settings }),
+  });
+}
+
+export const useCustomers = () => useQuery({ queryKey: keys.customers, queryFn: api.customers });
+export const useCustomer = (id: number) =>
+  useQuery({ queryKey: keys.customer(id), queryFn: () => api.customer(id) });
+
+export function useUpdateCustomer(id: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (d: { notes?: string; tags?: string[]; is_regular_override?: boolean }) => api.updateCustomer(id, d),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: keys.customer(id) });
+      qc.invalidateQueries({ queryKey: keys.customers });
+    },
   });
 }
 

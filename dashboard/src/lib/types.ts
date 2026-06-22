@@ -76,3 +76,22 @@ export interface WhatsAppConnection {
   phone_number_id: string | null;
   waba_id: string | null;
 }
+
+export interface Customer {
+  id: number;
+  name: string | null;
+  phone_number: string;
+  is_regular: boolean;
+  order_count: number;
+  total_spent: number;
+  last_order_at: string | null;
+  top_items: { name: string; count: number }[];
+  tags: string[];
+}
+
+export interface CustomerDetail extends Customer {
+  notes: string | null;
+  is_regular_override: boolean | null;
+  avg_cadence_days: number | null;
+  recent_orders: Order[];
+}
