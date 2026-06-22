@@ -174,6 +174,32 @@ async def send_message(
             raise
 
 
+async def send_image(
+    to: str,
+    image_url: str,
+    *,
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None,
+) -> dict:
+    """Send an image message by link (WhatsApp Cloud API)."""
+    pid, token = _resolve_credentials(phone_number_id, access_token)
+    if not pid or not token:
+        return {"error": "whatsapp_not_configured"}
+    url = f"{GRAPH_BASE}/{pid}/messages"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "image",
+        "image": {"link": image_url},
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(url, headers=headers, json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def send_template_message(
     to: str,
     template_name: str,
@@ -281,3 +307,23 @@ def parse_whatsapp_message(payload: dict) -> list[dict]:
     except Exception as exc:
         logger.error("Failed to parse webhook payload: %s", exc)
     return messages
+
+
+# ── 24-hour service window ───────────────────────────────────────────────────────
+import datetime as _dt
+
+
+async def within_service_window(session, customer_id: int, hours: int = 24) -> bool:
+    """True when the customer messaged inbound within the last `hours` (WA free-form window)."""
+    from sqlalchemy import select
+    from models import Message
+    stmt = (
+        select(Message.timestamp)
+        .where(Message.customer_id == customer_id, Message.direction == "inbound")
+        .order_by(Message.timestamp.desc())
+        .limit(1)
+    )
+    last = (await session.execute(stmt)).scalar_one_or_none()
+    if last is None:
+        return False
+    return (_dt.datetime.utcnow() - last) <= _dt.timedelta(hours=hours)
