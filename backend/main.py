@@ -724,6 +724,10 @@ async def update_business_profile(
 ):
     """PATCH /api/business — rename the authenticated owner's business."""
     business.business_name = body.business_name
+    if body.payment_methods is not None:
+        business.payment_methods = [m.model_dump() for m in body.payment_methods]
+    if body.qris_image_url is not None:
+        business.qris_image_url = body.qris_image_url or None
     await session.flush()
     return business
 

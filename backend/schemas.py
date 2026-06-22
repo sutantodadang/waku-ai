@@ -84,9 +84,17 @@ class BusinessRegister(BaseModel):
     settings: Optional[dict] = None
 
 
+class PaymentMethod(BaseModel):
+    type: str = Field(..., pattern="^(qris|rekening|ewallet)$")
+    label: str = Field(..., min_length=1, max_length=60)
+    value: str = Field(..., min_length=1, max_length=120)
+
+
 class BusinessProfileUpdate(BaseModel):
-    """PATCH /api/business — rename the authenticated business."""
+    """PATCH /api/business — rename + payment config (all optional except name)."""
     business_name: str = Field(..., min_length=1, max_length=255)
+    payment_methods: Optional[list[PaymentMethod]] = Field(default=None, max_length=10)
+    qris_image_url: Optional[str] = Field(default=None, max_length=512)
 
 
 class BusinessResponse(BaseModel):
@@ -95,6 +103,8 @@ class BusinessResponse(BaseModel):
     business_name: str
     settings: Optional[dict] = None
     created_at: datetime.datetime
+    payment_methods: list = Field(default_factory=list)
+    qris_image_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
