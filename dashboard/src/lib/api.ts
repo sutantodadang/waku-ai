@@ -88,6 +88,7 @@ export const api = {
   // ── Settings + business ──
   settings: () => req<Settings>("/api/settings"),
   updateSettings: (d: Partial<Settings>) => req<Settings>("/api/settings", { method: "PUT", ...body(d) }),
+  getBusiness: () => req<BusinessProfile>("/api/business"),
   renameBusiness: (business_name: string) =>
     req<{ business_name: string }>("/api/business", { method: "PATCH", ...body({ business_name }) }),
   updateBusiness: (d: { business_name: string; payment_methods?: PaymentMethod[]; qris_image_url?: string | null }) =>

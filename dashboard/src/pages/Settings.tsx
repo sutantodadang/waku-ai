@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "@tanstack/react-router";
-import { useSettings, useUpdateSettings, useUpdateBusiness } from "../lib/queries";
+import { useSettings, useUpdateSettings, useUpdateBusiness, useBusiness } from "../lib/queries";
 import { api, ApiError } from "../lib/api";
 import { authStore, useAuth } from "../lib/auth";
 import { Button, Card, ErrorBox, Field, inputCls, PageTitle, Spinner } from "../components/ui";
@@ -15,6 +15,7 @@ export default function Settings() {
   const save = useUpdateSettings();
   const { businessName } = useAuth();
   const updateBiz = useUpdateBusiness();
+  const { data: bizData } = useBusiness();
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [qris, setQris] = useState("");
 
@@ -23,6 +24,14 @@ export default function Settings() {
   useEffect(() => {
     if (data) setForm(data);
   }, [data]);
+
+  // Seed payment state from server so saves never wipe existing methods
+  useEffect(() => {
+    if (bizData) {
+      setMethods(bizData.payment_methods ?? []);
+      setQris(bizData.qris_image_url ?? "");
+    }
+  }, [bizData]);
 
   // Profil bisnis (rename)
   const [bizName, setBizName] = useState("");

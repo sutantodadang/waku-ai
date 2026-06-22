@@ -743,6 +743,14 @@ async def register_business(body: BusinessRegister, session: AsyncSession = Depe
     return business
 
 
+@app.get("/api/business", response_model=BusinessResponse)
+async def get_business_profile(
+    business: Business = Depends(get_current_business),
+):
+    """GET /api/business — the authenticated owner's business profile."""
+    return business
+
+
 @app.patch("/api/business", response_model=BusinessResponse)
 async def update_business_profile(
     body: BusinessProfileUpdate,
