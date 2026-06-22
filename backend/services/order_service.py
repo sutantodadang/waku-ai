@@ -97,10 +97,13 @@ def extract_order_from_message(text: str, known_products: Optional[dict[str, flo
                         break
             seen.add(nlow)
             items.append({"name": pname, "quantity": qty, "price": known_products[pname]})
-        if items:
-            logger.debug("Catalog-matched %d items from: '%s'", len(items), text[:80])
-            return items
+        # Catalog is authoritative: an off-catalog item ("motor", "mobil") is not a
+        # real order. Return whatever matched (possibly nothing) and never fall
+        # through to the generic regex, which would invent a Rp0 phantom order.
+        logger.debug("Catalog-matched %d items from: '%s'", len(items), text[:80])
+        return items
 
+    # No catalog known — best-effort generic parse.
     # Split into segments on commas / dan / sama / plus
     segments = SPLIT_PATTERN.split(text)
 
