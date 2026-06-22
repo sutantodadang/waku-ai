@@ -305,7 +305,7 @@ def _llm_reply(conv: Conversation, intent: str, business_context: Optional[dict]
     if conv.catalog:
         catalog_text = "\n".join(
             f"- {item['name']}: Rp{item['price']:,.0f}" + (f" (stok: {'ada' if item.get('stock', True) else 'habis'})" if 'stock' in item else "")
-            for item in conv.catalog[:20]  # Limit to 20 items
+            for item in conv.catalog
         )
         extra_context += f"\n\nKATALOG PRODUK:\n{catalog_text}"
 

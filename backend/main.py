@@ -80,6 +80,7 @@ from services.order_service import (
     save_message,
 )
 from services.embeddings import embed_product
+from services.retrieval import select_relevant_products
 
 load_dotenv()
 
@@ -384,10 +385,7 @@ async def _generate_ai_reply(
     catalog + context. Falls back to a sensible Indonesian reply when the AI
     service is unreachable.
     """
-    products = (
-        await session.execute(select(Product).where(Product.business_id == business.id))
-    ).scalars().all()
-    catalog = [{"name": p.name, "price": p.price, "stock": True} for p in products]
+    catalog = await select_relevant_products(session, business.id, message_text, k=12)
 
     payload: dict[str, Any] = {
         "incoming_message": message_text,
