@@ -92,6 +92,14 @@ class CatalogSearchRequest(BaseModel):
     catalog: list[dict] = Field(..., description="Product catalog to search in")
 
 
+class EmbedRequest(BaseModel):
+    texts: list[str] = Field(..., description="Texts to embed")
+
+
+class EmbedResponse(BaseModel):
+    vectors: list[list[float]] = Field(default_factory=list)
+
+
 # ──────────────────────────────────────────────
 #  Endpoints
 # ──────────────────────────────────────────────
@@ -188,6 +196,17 @@ async def ai_catalog_search(request: CatalogSearchRequest):
     except Exception as e:
         logger.exception(f"Error in /ai/catalog-search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ai/embed", response_model=EmbedResponse, dependencies=[Depends(require_secret)])
+async def ai_embed(request: EmbedRequest):
+    """Embed texts for hybrid catalog retrieval."""
+    from embeddings import embed_texts
+    try:
+        return EmbedResponse(vectors=embed_texts(request.texts))
+    except RuntimeError as exc:
+        logger.warning("Embedding unavailable: %s", exc)
+        raise HTTPException(status_code=502, detail="Embedding provider unavailable")
 
 
 # ──────────────────────────────────────────────

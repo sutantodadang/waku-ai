@@ -16,6 +16,10 @@ class Settings:
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3")
 
+    # Embeddings (Phase B hybrid retrieval)
+    embed_model: str = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+    ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+
     # Service
     service_port: int = int(os.getenv("AI_SERVICE_PORT", "8001"))
     # Shared secret the backend must send (X-Waku-Secret). Empty = open (dev only).
