@@ -204,6 +204,17 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
             return (f"Baik Kak! Waku catat dulu ya:\n{conv.order.summary()}\n"
                     "Ada lagi yang mau dipesan? 🙏")
 
+        # No catalog product recognized. Don't open an empty order — show the
+        # real menu so off-catalog requests ("pesan 1 mobil") are rejected.
+        if conv.catalog:
+            lines = ["Tentu Kak! 😊 Waku hanya melayani menu berikut ya:"]
+            for item in conv.catalog[:15]:
+                stock = "✅" if item.get("stock", True) else "❌"
+                lines.append(f"  {stock} {item['name']} — Rp{item.get('price', 0):,.0f}")
+            if len(conv.catalog) > 15:
+                lines.append(f"  ... dan {len(conv.catalog) - 15} menu lainnya")
+            lines.append("\nMau pesan yang mana Kak?")
+            return "\n".join(lines)
         conv.order.active = True
         conv.order.started_at = datetime.now().isoformat()
         return "Baik Kak, silakan disebutkan apa saja yang mau dipesan ya 😊"
@@ -294,7 +305,11 @@ def _llm_reply(conv: Conversation, intent: str, business_context: Optional[dict]
     system_prompt = (
         "Kamu adalah **Waku**, asisten AI untuk UMKM di Indonesia. "
         "Gunakan bahasa Indonesia yang hangat, sopan, panggil pelanggan dengan 'Kak'. "
-        "Jawab singkat dan jelas seperti orang ngobrol di WhatsApp."
+        "Jawab singkat dan jelas seperti orang ngobrol di WhatsApp. "
+        "PENTING: Kamu HANYA boleh menjual produk yang ada di KATALOG PRODUK di atas. "
+        "Jangan pernah mengarang produk, harga, atau stok di luar katalog. "
+        "Jika pelanggan menanyakan atau memesan sesuatu yang tidak ada di katalog, "
+        "tolak dengan sopan dan tawarkan menu yang tersedia."
         + extra_context
     )
 
