@@ -72,6 +72,7 @@ from services.order_service import (
     get_daily_summary,
     get_or_create_customer,
     get_orders_for_business,
+    recompute_customer_stats,
     save_message,
 )
 
@@ -264,6 +265,10 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
             if order_items:
                 order = await create_order(session, business.id, customer.id, order_items)
                 logger.info("Order #%d auto-extracted from message.", order.id)
+                try:
+                    await recompute_customer_stats(session, customer.id)
+                except Exception:
+                    logger.exception("Failed to recompute stats for customer %d", customer.id)
 
             reply = await _generate_ai_reply(session, business, customer.phone_number, text, order_items or None)
             reply = f"{reply}{AI_REPLY_FOOTER}"
@@ -794,6 +799,10 @@ async def dashboard_update_order_status(
 
     order.status = db_status
     await session.flush()
+    try:
+        await recompute_customer_stats(session, order.customer_id)
+    except Exception:
+        logger.exception("Failed to recompute stats for customer %d", order.customer_id)
     return _order_to_dashboard_dict(order, customer.name or customer.phone_number)
 
 
