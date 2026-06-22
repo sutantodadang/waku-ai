@@ -260,6 +260,33 @@ async def create_order(
     return order
 
 
+async def find_amendable_order(
+    session: AsyncSession, business_id: int, customer_id: int, within_hours: int = 6
+) -> Optional[Order]:
+    """Most recent non-terminal order (pending/confirmed) within the window, else None."""
+    cutoff = datetime.utcnow() - timedelta(hours=within_hours)
+    stmt = (
+        select(Order)
+        .where(
+            Order.business_id == business_id,
+            Order.customer_id == customer_id,
+            Order.status.in_(("pending", "confirmed")),
+            Order.created_at >= cutoff,
+        )
+        .order_by(Order.created_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def update_order_items(session: AsyncSession, order: Order, items: list[dict]) -> Order:
+    """Replace an order's items and recompute its total."""
+    order.items = items
+    order.total = sum((it.get("price") or 0) * (it.get("quantity") or 1) for it in items)
+    await session.flush()
+    return order
+
+
 def is_regular(cust: Customer) -> bool:
     """Loyalty is derived, never stored. Owner override wins when set."""
     if cust.is_regular_override is not None:
