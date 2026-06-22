@@ -69,6 +69,7 @@ from services.whatsapp import (
     subscribe_app_to_waba,
     verify_signature,
     verify_webhook as verify_webhook_token,
+    within_service_window,
 )
 from services.order_service import (
     create_order,
@@ -150,6 +151,12 @@ DASHBOARD_TO_DB_STATUS = {
     "dibatalkan": "cancelled",
 }
 DB_TO_DASHBOARD_STATUS = {v: k for k, v in DASHBOARD_TO_DB_STATUS.items()}
+
+STATUS_WA_MESSAGE = {
+    "confirmed": "Pesanan kakak lagi disiapkan ya 🙏",
+    "completed": "Pesanan kakak sudah selesai! Terima kasih 😊",
+    "cancelled": "Mohon maaf, pesanan kakak dibatalkan.",
+}
 
 DEFAULT_SETTINGS: dict = {
     "auto_reply_enabled": True,
@@ -907,6 +914,17 @@ async def dashboard_update_order_status(
         await recompute_customer_stats(session, order.customer_id)
     except Exception:
         logger.exception("Failed to recompute stats for customer %d", order.customer_id)
+
+    msg = STATUS_WA_MESSAGE.get(db_status)
+    if msg and await within_service_window(session, customer.id):
+        try:
+            await send_message(
+                customer.phone_number, msg,
+                phone_number_id=business.phone_number_id, access_token=business.access_token,
+            )
+        except Exception:
+            logger.exception("Status notification failed for order %d", order.id)
+
     return _order_to_dashboard_dict(order, customer.name or customer.phone_number)
 
 
