@@ -91,6 +91,9 @@ AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://localhost:8001")
 # reverse-OTP code). Shown in the dashboard. e.g. "+1 555-648-9439".
 PLATFORM_WHATSAPP_NUMBER = os.getenv("PLATFORM_WHATSAPP_NUMBER", "")
 
+# Appended to every customer-facing AI reply so customers know it's automated.
+AI_REPLY_FOOTER = "\n\n— 🤖 Dibalas otomatis oleh Waku AI"
+
 
 # ── Lifespan ────────────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -260,6 +263,7 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
                 logger.info("Order #%d auto-extracted from message.", order.id)
 
             reply = await _generate_ai_reply(session, business, customer.phone_number, text, order_items or None)
+            reply = f"{reply}{AI_REPLY_FOOTER}"
 
             await send_message(
                 from_number, reply,
