@@ -3,9 +3,9 @@ import { Link } from "@tanstack/react-router";
 const items = [
   { to: "/", icon: "🏠", label: "Beranda" },
   { to: "/orders", icon: "🧾", label: "Pesanan" },
+  { to: "/customers", icon: "👥", label: "Pelanggan" },
   { to: "/catalog", icon: "🏪", label: "Katalog" },
   { to: "/settings", icon: "💬", label: "Auto-Balas" },
-  { to: "/whatsapp", icon: "🔌", label: "Koneksi" },
 ] as const;
 
 export default function BottomNav() {

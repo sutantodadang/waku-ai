@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "@tanstack/react-router";
 import { useSettings, useUpdateSettings } from "../lib/queries";
 import { api, ApiError } from "../lib/api";
 import { authStore, useAuth } from "../lib/auth";
@@ -59,6 +60,16 @@ export default function Settings() {
   return (
     <div className="space-y-4">
       <PageTitle>Auto-Balas</PageTitle>
+
+      <Card>
+        <Link to="/whatsapp" className="flex items-center justify-between">
+          <span>
+            <span className="block font-semibold text-ink">Koneksi WhatsApp</span>
+            <span className="block text-sm text-ink/50">Hubungkan / cek status nomor bisnis.</span>
+          </span>
+          <span className="text-ink/30" aria-hidden>→</span>
+        </Link>
+      </Card>
 
       <Card>
         <SectionTitle>Profil bisnis</SectionTitle>
