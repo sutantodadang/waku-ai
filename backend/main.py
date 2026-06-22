@@ -163,6 +163,18 @@ STATUS_WA_MESSAGE = {
     "cancelled": "Mohon maaf, pesanan kakak dibatalkan.",
 }
 
+
+def _fmt_when(dt) -> str:
+    return dt.strftime("%d/%m %H:%M") if dt else "(waktu menyusul)"
+
+
+BOOKING_STATUS_WA_MESSAGE = {
+    "confirmed": "Booking kakak {when} sudah dikonfirmasi ✅.",
+    "rejected": "Mohon maaf, jadwal yang diminta belum bisa. Boleh pilih waktu lain Kak?",
+    "completed": "Terima kasih sudah datang ke {store}! Sampai jumpa lagi 😊",
+    "cancelled": "Mohon maaf, booking kakak dibatalkan.",
+}
+
 DEFAULT_SETTINGS: dict = {
     "auto_reply_enabled": True,
     "greeting_message": "",
@@ -1244,8 +1256,26 @@ async def health():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 async def _maybe_notify_booking_status(session, business, booking, customer, new_status) -> None:
-    """Placeholder — Task 6 implements booking status→WA notify + payment."""
-    return
+    """Notify customer of booking status change (24h-gated); on confirmed, also send payment."""
+    if not new_status:
+        return
+    template = BOOKING_STATUS_WA_MESSAGE.get(new_status)
+    if template and await within_service_window(session, customer.id):
+        msg = template.format(when=_fmt_when(booking.scheduled_at), store=business.business_name)
+        try:
+            await send_message(
+                customer.phone_number, msg,
+                phone_number_id=business.phone_number_id,
+                access_token=business.access_token,
+            )
+        except Exception:
+            logger.exception("Booking status notify failed for booking %d", booking.id)
+    if new_status == "confirmed":
+        amount = booking.deposit_amount if booking.deposit_amount else booking.total
+        try:
+            await send_payment_info(session, business, customer, amount)
+        except Exception:
+            logger.exception("Booking payment send failed for booking %d", booking.id)
 
 
 async def _booking_to_dict(session: AsyncSession, b: Booking, customer_name: str) -> dict:
