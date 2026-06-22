@@ -14,11 +14,12 @@ function rel(iso: string | null): string {
 }
 
 function Detail({ id, onBack }: { id: number; onBack: () => void }) {
-  const { data, isLoading } = useCustomer(id);
+  const { data, isLoading, error } = useCustomer(id);
   const upd = useUpdateCustomer(id);
   const [notes, setNotes] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState("");
 
+  if (error) return <ErrorBox message={(error as ApiError).message} />;
   if (isLoading || !data) return <Spinner />;
   const notesVal = notes ?? data.notes ?? "";
   const tags = data.tags ?? [];
@@ -42,7 +43,7 @@ function Detail({ id, onBack }: { id: number; onBack: () => void }) {
           <h2 className="mb-2 font-display text-base font-bold text-ink">Item favorit</h2>
           <div className="flex flex-wrap gap-2">
             {data.top_items.map((t) => (
-              <span key={t.name} className="rounded-full bg-brand-tint px-3 py-1 text-sm font-semibold text-brand-deep">
+              <span key={t.name + t.count} className="rounded-full bg-brand-tint px-3 py-1 text-sm font-semibold text-brand-deep">
                 {t.name} · {t.count}×
               </span>
             ))}
