@@ -16,6 +16,8 @@ from models import Customer, Message, Order, Product
 
 logger = logging.getLogger(__name__)
 
+REGULAR_THRESHOLD = 5
+
 # ── Regex patterns for Indonesian order text ────────────────────────────────────
 # Matches patterns like:
 #   "beli 2 nasi goreng"
@@ -256,6 +258,52 @@ async def create_order(
         order.id, business_id, customer_id, total,
     )
     return order
+
+
+def is_regular(cust: Customer) -> bool:
+    """Loyalty is derived, never stored. Owner override wins when set."""
+    if cust.is_regular_override is not None:
+        return bool(cust.is_regular_override)
+    return (cust.order_count or 0) >= REGULAR_THRESHOLD
+
+
+async def recompute_customer_stats(session: AsyncSession, customer_id: int) -> None:
+    """Recompute the cached stats on a customer from their non-cancelled orders.
+    Single source of truth — call after any order create / status change."""
+    cust = await session.get(Customer, customer_id)
+    if cust is None:
+        return
+
+    orders = list((await session.execute(
+        select(Order)
+        .where(Order.customer_id == customer_id, Order.status != "cancelled")
+        .order_by(Order.created_at)
+    )).scalars().all())
+
+    cust.order_count = len(orders)
+    cust.total_spent = float(sum(o.total or 0 for o in orders))
+    cust.last_order_at = orders[-1].created_at if orders else None
+
+    counts: dict[str, int] = {}
+    for o in orders:
+        for it in (o.items or []):
+            name = (it.get("name") or "").strip()
+            if not name:
+                continue
+            qty = int(it.get("quantity") or it.get("qty") or 1)
+            counts[name] = counts.get(name, 0) + qty
+    top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:3]
+    cust.top_items = [{"name": n, "count": c} for n, c in top]
+
+    if len(orders) >= 2:
+        dates = [o.created_at for o in orders]
+        gaps = [(dates[i] - dates[i - 1]).total_seconds() / 86400 for i in range(1, len(dates))]
+        cust.avg_cadence_days = sum(gaps) / len(gaps)
+    else:
+        cust.avg_cadence_days = None
+
+    cust.stats_updated_at = datetime.utcnow()
+    await session.flush()
 
 
 async def get_orders_for_business(
