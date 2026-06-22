@@ -48,23 +48,23 @@ function ProductForm({
     }
   }
   return (
-    <form onSubmit={submit} className="space-y-2">
+    <form onSubmit={submit} className="space-y-3">
       {err && <ErrorBox message={err} />}
-      <Field label="Nama Produk">
+      <Field label="Nama produk">
         <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Nasi Goreng" />
       </Field>
       <Field label="Harga (Rp)">
-        <input className={inputCls} type="number" value={price} onChange={(e) => setPrice(Number(e.target.value))} />
+        <input className={inputCls} type="number" inputMode="numeric" value={price} onChange={(e) => setPrice(Number(e.target.value))} />
       </Field>
       <Field label="Deskripsi">
-        <textarea className={inputCls} value={desc} onChange={(e) => setDesc(e.target.value)} />
+        <textarea className={`${inputCls} min-h-[4rem] py-2`} value={desc} onChange={(e) => setDesc(e.target.value)} />
       </Field>
       <Field label="Foto (opsional)">
-        <input type="file" accept="image/*" onChange={upload} className="text-sm" />
+        <input type="file" accept="image/*" onChange={upload} className="text-sm text-ink/60 file:mr-2 file:rounded-full file:border-0 file:bg-brand-tint file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-brand-deep" />
       </Field>
-      {imageUrl && <img src={imageUrl} alt="" className="h-20 rounded-lg object-cover" />}
+      {imageUrl && <img src={imageUrl} alt="" className="h-24 w-full rounded-xl object-cover" />}
       <div className="grid grid-cols-2 gap-2">
-        <Button type="submit" disabled={busy}>{busy ? "..." : "💾 Simpan"}</Button>
+        <Button type="submit" disabled={busy}>{busy ? "..." : "Simpan"}</Button>
         <Button variant="ghost" onClick={onCancel}>Batal</Button>
       </div>
     </form>
@@ -79,10 +79,13 @@ export default function Catalog() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
-        <PageTitle>🏪 Katalog Produk</PageTitle>
-        <button onClick={() => setAdding((a) => !a)} className="rounded-full bg-orange px-3 py-1 text-sm font-semibold text-white">
-          ➕ Tambah
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <PageTitle>Katalog</PageTitle>
+        <button
+          onClick={() => setAdding((a) => !a)}
+          className="min-h-[2.25rem] shrink-0 rounded-full bg-accent px-4 text-sm font-semibold text-white shadow-[0_2px_10px_rgba(255,90,54,0.28)] transition active:scale-[0.98]"
+        >
+          {adding ? "Tutup" : "+ Tambah"}
         </button>
       </div>
 
@@ -100,26 +103,30 @@ export default function Catalog() {
 
       {isLoading && <Spinner />}
       {error && <ErrorBox message={(error as ApiError).message} />}
-      {data && data.length === 0 && !adding && <Card><p className="text-sm text-gray-500">Belum ada produk. 🏪</p></Card>}
+      {data && data.length === 0 && !adding && (
+        <Card>
+          <p className="text-sm text-ink/55">Belum ada produk. Tambah menu pertamamu agar Waku bisa menawarkannya ke pelanggan.</p>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 gap-3">
         {data?.map((p) => (
-          <div key={p.id} className="overflow-hidden rounded-2xl bg-white shadow-sm">
+          <div key={p.id} className="overflow-hidden rounded-[20px] bg-white ring-1 ring-ink/[0.06] shadow-[0_1px_3px_rgba(12,31,23,0.05)]">
             {p.image_url ? (
-              <img src={p.image_url} alt={p.name} className="h-32 w-full object-cover" />
+              <img src={p.image_url} alt={p.name} className="aspect-square w-full object-cover" />
             ) : (
-              <div className="flex h-32 w-full items-center justify-center bg-teal-light text-4xl">📦</div>
+              <div className="grid aspect-square w-full place-items-center bg-brand-tint text-3xl">🍽️</div>
             )}
             <div className="p-3">
-              <p className="font-bold">{p.name}</p>
-              <p className="font-bold text-orange">{fmtRp(p.price)}</p>
-              <p className="line-clamp-2 text-xs text-gray-500">{p.description || "—"}</p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <Button variant="ghost" onClick={() => setEditing(editing === p.id ? null : p.id)}>✏️ Edit</Button>
-                <Button variant="danger" onClick={() => remove.mutate(p.id)}>🗑️ Hapus</Button>
+              <p className="truncate font-semibold text-ink">{p.name}</p>
+              <p className="tnum mt-0.5 font-bold text-ink">{fmtRp(p.price)}</p>
+              {p.description && <p className="mt-1 line-clamp-2 text-xs text-ink/45">{p.description}</p>}
+              <div className="mt-2.5 grid grid-cols-2 gap-2">
+                <Button variant="ghost" onClick={() => setEditing(editing === p.id ? null : p.id)}>Edit</Button>
+                <Button variant="danger" onClick={() => remove.mutate(p.id)}>Hapus</Button>
               </div>
               {editing === p.id && (
-                <div className="mt-2">
+                <div className="mt-3">
                   <ProductForm
                     initial={p}
                     onSubmit={async (d) => {
