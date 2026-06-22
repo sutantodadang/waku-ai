@@ -61,6 +61,7 @@ class ReplyRequest(BaseModel):
     incoming_message: str = Field(..., description="Customer's latest message")
     catalog: Optional[list[dict]] = Field(default=None, description="Product catalog [{name, price, stock}]")
     session_id: str = Field(default="default", description="Conversation/session identifier")
+    customer: Optional[dict] = Field(default=None, description="Personalisation card {name, usual_items, ...}")
 
 
 class ReplyResponse(BaseModel):
@@ -124,6 +125,7 @@ async def ai_reply(request: ReplyRequest):
             incoming_message=request.incoming_message,
             business_context=request.business_context,
             catalog=request.catalog,
+            customer=request.customer,
         )
 
         # Get the intent from the last analysis (stored in conv)

@@ -162,6 +162,32 @@ def _order_to_dashboard_dict(order: Order, customer_name: str) -> dict:
     }
 
 
+def _build_customer_card(cust: Customer) -> Optional[dict]:
+    """Compact personalisation context for the AI. Returns None for an unknown
+    customer (no real name, no orders, no notes/tags) so the AI never fabricates."""
+    name = (cust.name or "").strip()
+    known_name = bool(name) and name != cust.phone_number
+    if (cust.order_count or 0) == 0 and not known_name and not cust.notes and not (cust.tags or []):
+        return None
+
+    card: dict = {"order_count": cust.order_count or 0, "is_regular": is_regular(cust)}
+    if known_name:
+        card["name"] = name
+    if cust.top_items:
+        card["usual_items"] = [t["name"] for t in cust.top_items]
+    if cust.last_order_at:
+        card["last_order_at"] = cust.last_order_at.isoformat()
+        if cust.avg_cadence_days:
+            due = cust.last_order_at + timedelta(days=cust.avg_cadence_days)
+            card["reorder_due"] = datetime.utcnow() > due
+            card["avg_cadence_days"] = round(cust.avg_cadence_days, 1)
+    if cust.notes:
+        card["notes"] = cust.notes
+    if cust.tags:
+        card["tags"] = cust.tags
+    return card
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  WEBHOOK ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -274,7 +300,7 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
                 except Exception:
                     logger.exception("Failed to recompute stats for customer %d", customer.id)
 
-            reply = await _generate_ai_reply(session, business, customer.phone_number, text, order_items or None)
+            reply = await _generate_ai_reply(session, business, customer.phone_number, text, order_items or None, customer=customer)
             reply = f"{reply}{AI_REPLY_FOOTER}"
 
             await send_message(
@@ -350,6 +376,7 @@ async def _generate_ai_reply(
     session_id: str,
     message_text: str,
     extracted_order: Optional[list[dict]] = None,
+    customer: Optional[Customer] = None,
 ) -> str:
     """
     Forward the message to the AI service (/ai/reply), scoped to this business's
@@ -367,6 +394,11 @@ async def _generate_ai_reply(
         "business_context": {"store_name": business.business_name, "owner_name": ""},
         "catalog": catalog,
     }
+
+    if customer is not None:
+        card = _build_customer_card(customer)
+        if card is not None:
+            payload["customer"] = card
 
     headers = {"X-Waku-Secret": AI_SERVICE_SECRET} if AI_SERVICE_SECRET else {}
     try:

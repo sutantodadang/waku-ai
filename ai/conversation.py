@@ -121,7 +121,8 @@ manager = ConversationManager()
 
 def generate_reply(session_id: str, incoming_message: str,
                    business_context: Optional[dict] = None,
-                   catalog: Optional[list[dict]] = None) -> str:
+                   catalog: Optional[list[dict]] = None,
+                   customer: Optional[dict] = None) -> str:
     """
     Generate a reply for an incoming message using NLU + LLM or rule-based logic.
 
@@ -161,7 +162,7 @@ def generate_reply(session_id: str, incoming_message: str,
 
     if response is None:
         # Let LLM handle it
-        response = _llm_reply(conv, intent, business_context)
+        response = _llm_reply(conv, intent, business_context, customer)
 
     conv.add_message("assistant", response)
     return response
@@ -289,7 +290,8 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
     return None  # Fall through to LLM
 
 
-def _llm_reply(conv: Conversation, intent: str, business_context: Optional[dict]) -> str:
+def _llm_reply(conv: Conversation, intent: str, business_context: Optional[dict],
+               customer: Optional[dict] = None) -> str:
     """Generate reply using LLM with context."""
     context = conv.get_context()
 
@@ -309,6 +311,25 @@ def _llm_reply(conv: Conversation, intent: str, business_context: Optional[dict]
 
     if conv.order.active:
         extra_context += f"\n\nPESANAN SAAT INI:\n{conv.order.summary()}"
+
+    if customer:
+        lines = []
+        if customer.get("name"):
+            tag = " (langganan)" if customer.get("is_regular") else ""
+            lines.append(f"- Nama: {customer['name']}{tag}, {customer.get('order_count', 0)} order")
+        if customer.get("usual_items"):
+            lines.append("- Biasa pesan: " + ", ".join(customer["usual_items"]))
+        if customer.get("reorder_due"):
+            lines.append(f"- Sudah waktunya order lagi (biasanya tiap ~{customer.get('avg_cadence_days')} hari)")
+        if customer.get("notes"):
+            lines.append(f"- Catatan: {customer['notes']}")
+        if customer.get("tags"):
+            lines.append("- Preferensi: " + "; ".join(customer["tags"]))
+        if lines:
+            extra_context += (
+                "\n\nPELANGGAN (pakai untuk menyapa akrab & menawarkan pesanan biasanya; "
+                "JANGAN mengarang data pelanggan di luar ini):\n" + "\n".join(lines)
+            )
 
     system_prompt = (
         "Kamu adalah **Waku**, asisten AI untuk UMKM di Indonesia. "
