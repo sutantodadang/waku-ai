@@ -12,8 +12,6 @@ from models import Booking, Staff
 
 logger = logging.getLogger(__name__)
 
-_TERMINAL = ("completed", "cancelled", "rejected")
-
 
 async def create_booking(session: AsyncSession, business_id: int, customer_id: int,
                          items: list[dict], scheduled_at: Optional[datetime],

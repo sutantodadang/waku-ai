@@ -47,6 +47,49 @@ def test_create_and_clash_same_staff(client):
     assert n_clash == 1 and n_free == 0
 
 
+def test_any_staff_not_full_no_clash(client):
+    """1 overlap, 2 active staff → capacity not full → no clash."""
+    t, h = _biz_cust(client)
+
+    async def _run():
+        async with database.async_session_factory() as s:
+            biz = (await s.execute(select(models.Business))).scalars().first()
+            cust = models.Customer(phone_number="628800800800", business_id=biz.id, name="B")
+            staff1 = models.Staff(business_id=biz.id, name="Ani", active=True)
+            staff2 = models.Staff(business_id=biz.id, name="Budi", active=True)
+            s.add_all([cust, staff1, staff2]); await s.flush()
+            base = datetime.datetime(2026, 8, 1, 10, 0)
+            # one confirmed booking overlapping the window (assigned to staff1)
+            await _seed_confirmed(s, biz.id, cust.id, staff1.id, base, 60)
+            # query with staff_id=None: 1 overlap < 2 staff → not full → []
+            result = await bk.check_booking_clash(s, biz.id, None, base + datetime.timedelta(minutes=30), 60)
+            return len(result)
+
+    n = asyncio.get_event_loop().run_until_complete(_run())
+    assert n == 0
+
+
+def test_any_staff_full_clash(client):
+    """1 overlap, 1 active staff → capacity full → clash returned."""
+    t, h = _biz_cust(client)
+
+    async def _run():
+        async with database.async_session_factory() as s:
+            biz = (await s.execute(select(models.Business))).scalars().first()
+            cust = models.Customer(phone_number="628900900900", business_id=biz.id, name="C")
+            staff = models.Staff(business_id=biz.id, name="Citra", active=True)
+            s.add_all([cust, staff]); await s.flush()
+            base = datetime.datetime(2026, 8, 2, 10, 0)
+            # one confirmed booking overlapping the window
+            await _seed_confirmed(s, biz.id, cust.id, staff.id, base, 60)
+            # query with staff_id=None: 1 overlap >= 1 staff → full → non-empty list
+            result = await bk.check_booking_clash(s, biz.id, None, base + datetime.timedelta(minutes=30), 60)
+            return len(result)
+
+    n = asyncio.get_event_loop().run_until_complete(_run())
+    assert n >= 1
+
+
 def test_resolve_staff(client):
     t, h = _biz_cust(client)
 
