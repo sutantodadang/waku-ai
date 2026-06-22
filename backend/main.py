@@ -94,7 +94,8 @@ AI_SERVICE_SECRET = os.getenv("AI_SERVICE_SECRET", "")
 PLATFORM_WHATSAPP_NUMBER = os.getenv("PLATFORM_WHATSAPP_NUMBER", "")
 
 # Appended to every customer-facing AI reply so customers know it's automated.
-AI_REPLY_FOOTER = "\n\n— 🤖 Dibalas otomatis oleh Waku AI"
+# WhatsApp italic (_..._) renders as a subtle footnote.
+AI_REPLY_FOOTER = "\n\n_🤖 Waku · balasan otomatis_"
 
 
 # ── Lifespan ────────────────────────────────────────────────────────────────────
