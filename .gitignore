@@ -36,3 +36,4 @@ Thumbs.db
 .env.local
 .env.production
 .superpowers/
+.remember/
