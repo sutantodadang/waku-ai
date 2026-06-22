@@ -1331,6 +1331,11 @@ async def update_booking(
     if body.scheduled_at is not None:
         booking.scheduled_at = body.scheduled_at
     if body.staff_id is not None:
+        staff = (await session.execute(
+            select(Staff).where(Staff.id == body.staff_id, Staff.business_id == business.id)
+        )).scalar_one_or_none()
+        if staff is None:
+            raise HTTPException(status_code=400, detail="Invalid staff_id for this business.")
         booking.staff_id = body.staff_id
     if body.status is not None:
         booking.status = body.status

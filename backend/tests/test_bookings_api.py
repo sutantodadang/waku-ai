@@ -47,3 +47,28 @@ def test_invalid_status_422(client):
     bid = _seed_booking(client, t["access_token"])
     r = client.patch(f"/api/bookings/{bid}", headers=auth(t["access_token"]), json={"status": "ngawur"})
     assert r.status_code == 422
+
+
+def test_cross_tenant_staff_id_idor(client):
+    """IDOR fix: tenant A cannot attach tenant B's staff to A's booking (expect 400)."""
+    a = register(client)
+    b = register(client, email="b2@x.com", phone="082333333333")
+
+    # Tenant B creates a staff member.
+    ha = auth(a["access_token"])
+    hb = auth(b["access_token"])
+    staff_b = client.post("/api/staff", headers=hb, json={"name": "Bob"}).json()
+    staff_b_id = staff_b["id"]
+
+    # Tenant A creates a booking.
+    bid = _seed_booking(client, a["access_token"])
+
+    # Tenant A tries to set tenant B's staff_id on their own booking → 400.
+    r = client.patch(f"/api/bookings/{bid}", headers=ha, json={"staff_id": staff_b_id})
+    assert r.status_code == 400, f"Expected 400, got {r.status_code}: {r.text}"
+
+    # Sanity: tenant A using their OWN valid staff works → 200.
+    staff_a = client.post("/api/staff", headers=ha, json={"name": "Alice"}).json()
+    r2 = client.patch(f"/api/bookings/{bid}", headers=ha, json={"staff_id": staff_a["id"]})
+    assert r2.status_code == 200, f"Expected 200, got {r2.status_code}: {r2.text}"
+    assert r2.json()["staff_id"] == staff_a["id"]
