@@ -455,24 +455,58 @@ async def _handle_inbound_image(session: AsyncSession, business: Business, custo
     products = (await session.execute(
         select(Product).where(Product.business_id == business.id)
     )).scalars().all()
-    catalog = [{"name": p.name, "price": p.price, "image_url": p.image_url} for p in products]
+    catalog = []
+    img_count = 0
+    for p in products:
+        item = {"name": p.name, "price": p.price, "image_url": p.image_url}
+        if img_count < 8:
+            loaded = _load_product_image_b64(p.image_url)
+            if loaded:
+                item["image_b64"], item["mime_type"] = loaded
+                img_count += 1
+        catalog.append(item)
+    if img_count == 0:
+        logger.info("No catalog product images available for visual match (business %d)", business.id)
+    elif len([p for p in products if p.image_url]) > 8:
+        logger.info("Catalog visual match capped at 8 images (business %d)", business.id)
 
     match = await _match_image_with_ai(business, content_bytes, mime, caption, catalog)
-    caption_stripped = caption.strip() if caption else ""
     matched_name = match.get("product_name") or ""
-    if caption_stripped:
-        # Customer asked something with the photo — answer naturally via the normal
-        # pipeline, grounded by the vision-identified product. Inbound image already saved.
-        grounded = (
-            caption_stripped
-            if not matched_name
-            else f"{caption_stripped}\n(Pelanggan mengirim foto produk yang dikenali: {matched_name})"
-        )
+    caption_stripped = (caption or "").strip()
+    if matched_name and caption_stripped:
+        # Visual match AND the customer asked something — answer naturally, grounded.
+        grounded = f"{caption_stripped}\n(Pelanggan mengirim foto produk yang dikenali: {matched_name})"
         await _reply_to_text(session, business, customer, grounded, message_id, save_inbound=False)
     else:
+        # No visual match (not-available reply) OR matched-but-no-caption (confirm template).
         reply = f"{match.get('reply') or 'Waku terima gambarnya Kak 🙏'}{AI_REPLY_FOOTER}"
         await send_message(from_number, reply, phone_number_id=business.phone_number_id, access_token=business.access_token)
         await save_message(session, business.id, customer.id, reply, "outbound")
+
+
+def _load_product_image_b64(image_url: Optional[str]) -> Optional[tuple[str, str]]:
+    """Return (base64, mime_type) for a product image, or None.
+    Handles local /uploads/ files and remote http(s) URLs."""
+    if not image_url:
+        return None
+    _MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+    try:
+        if image_url.startswith("/uploads/"):
+            path = os.path.join(UPLOAD_DIR, os.path.basename(image_url))
+            if not os.path.exists(path):
+                return None
+            ext = os.path.splitext(path)[1].lower()
+            with open(path, "rb") as f:
+                return base64.b64encode(f.read()).decode(), _MIME.get(ext, "image/jpeg")
+        if image_url.startswith("http://") or image_url.startswith("https://"):
+            with httpx.Client(timeout=10) as client:
+                r = client.get(image_url)
+                r.raise_for_status()
+                mime = r.headers.get("content-type", "image/jpeg").split(";")[0]
+                return base64.b64encode(r.content).decode(), mime
+    except Exception:
+        logger.warning("Could not load product image %s", image_url)
+    return None
 
 
 async def _match_image_with_ai(

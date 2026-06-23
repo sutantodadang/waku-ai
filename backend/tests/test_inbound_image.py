@@ -1,5 +1,8 @@
 """Inbound image handling: parse + download + persist + AI match + reply."""
 import asyncio
+import base64
+import os
+import tempfile
 
 import pytest
 from sqlalchemy import select
@@ -217,6 +220,108 @@ def test_inbound_image_with_caption_routes_to_conversational_pipeline(client, mo
     assert len(inbound) == 1, f"expected 1 inbound image row, got {len(inbound)}"
     assert inbound[0].media_url is not None, "inbound image must have media_url even when caption is routed"
     assert inbound[0].media_url.startswith("/uploads/")
+
+
+def test_no_visual_match_with_caption_sends_not_available_not_pipeline(client, monkeypatch):
+    """No visual match + caption → outbound 'belum menemukan', _reply_to_text NOT called."""
+
+    t = register(client, email="nomatch@x.com", phone="083333333333", business_name="Warung NM")
+    connect_wa(client, t["access_token"], phone_number_id="PNID_NM", access_token="TKN_NM")
+    biz = _get_business()
+
+    async def fake_download(media_id, *, phone_number_id=None, access_token=None):
+        return (b"\x89PNG\r\n\x1a\n", "image/png")
+
+    async def fake_send(*a, **k):
+        return {"messages": [{"id": "wamid.nm_out"}]}
+
+    async def fake_match_image_no_match(business, image_bytes, mime, caption, catalog):
+        return {
+            "matched": False,
+            "product_name": "",
+            "price": 0.0,
+            "reply": "Maaf Kak, Waku belum menemukan produk yang mirip dengan foto ini di katalog 🙏",
+        }
+
+    reply_to_text_calls = []
+
+    async def fake_reply_to_text(session, business, customer, text, message_id, *, save_inbound=True):
+        reply_to_text_calls.append(text)
+
+    monkeypatch.setattr(main, "download_media", fake_download)
+    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(main, "_match_image_with_ai", fake_match_image_no_match)
+    monkeypatch.setattr(main, "_reply_to_text", fake_reply_to_text)
+
+    img_msg = {
+        "from_number": "629111",
+        "message_id": "wamid.nm111",
+        "type": "image",
+        "media_id": "MEDIA_NM",
+        "caption": "apakah ada produk ini?",
+        "text": "apakah ada produk ini?",
+        "timestamp": "1700000111",
+    }
+
+    async def _run():
+        async with database.async_session_factory() as session:
+            await main._process_tenant_messages(session, biz, [img_msg])
+            await session.commit()
+
+    asyncio.run(_run())
+
+    # _reply_to_text must NOT have been called (no-match takes priority)
+    assert len(reply_to_text_calls) == 0, (
+        f"_reply_to_text should NOT be called on no visual match, got calls: {reply_to_text_calls}"
+    )
+
+    # Outbound must contain the not-available message
+    async def _check():
+        async with database.async_session_factory() as s:
+            msgs = (await s.execute(
+                select(models.Message).where(models.Message.business_id == biz.id)
+                .order_by(models.Message.id)
+            )).scalars().all()
+            return msgs
+
+    rows = asyncio.run(_check())
+    outbound = [m for m in rows if m.direction == "outbound"]
+    assert len(outbound) == 1, f"expected 1 outbound, got {len(outbound)}"
+    assert "belum menemukan" in outbound[0].content, (
+        f"outbound must contain 'belum menemukan', got: {outbound[0].content}"
+    )
+
+
+def test_load_product_image_b64_local_file():
+    """_load_product_image_b64 returns (b64, mime) for existing local /uploads/ file."""
+    # Write a tiny PNG to the real UPLOAD_DIR
+    png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
+    safe_name = "_test_b64_helper.png"
+    dest = os.path.join(main.UPLOAD_DIR, safe_name)
+    try:
+        with open(dest, "wb") as f:
+            f.write(png_bytes)
+
+        result = main._load_product_image_b64(f"/uploads/{safe_name}")
+        assert result is not None, "_load_product_image_b64 should return a tuple for existing file"
+        b64_str, mime_type = result
+        assert mime_type == "image/png"
+        assert base64.b64decode(b64_str) == png_bytes
+    finally:
+        if os.path.exists(dest):
+            os.remove(dest)
+
+
+def test_load_product_image_b64_missing_file():
+    """_load_product_image_b64 returns None for a /uploads/ path that does not exist."""
+    result = main._load_product_image_b64("/uploads/_nonexistent_file_xyzabc.png")
+    assert result is None
+
+
+def test_load_product_image_b64_none_url():
+    """_load_product_image_b64 returns None when image_url is None or empty."""
+    assert main._load_product_image_b64(None) is None
+    assert main._load_product_image_b64("") is None
 
 
 def test_inbound_image_graceful_on_download_failure(client, monkeypatch):

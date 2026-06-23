@@ -230,82 +230,109 @@ def ask_llm(messages: list[dict], intent: str = "UNKNOWN",
 # ──────────────────────────────────────────────
 
 def match_image_to_catalog(image_b64: str, mime_type: str, caption: str, catalog: list[dict]) -> dict:
-    """Ask a vision LLM which catalog product an image shows. Degrades to
-    matched=False with an ask-to-confirm reply when no vision model is available."""
+    """Ask a vision LLM which catalog product an image shows via VISUAL comparison.
 
-    _not_matched_reply = (
+    Only catalog items that carry ``image_b64`` can be visually compared; items
+    without it are ignored.  Degrades gracefully when no vision model is
+    available or no catalog images exist.
+    """
+
+    _no_image_reply = (
+        "Maaf Kak, Waku belum bisa mencocokkan foto karena belum ada foto produk di katalog 🙏 "
+        "Boleh sebutkan nama produknya ya?"
+    )
+    _text_only_reply = (
         "Waku terima gambarnya Kak 🙏 Tapi Waku belum yakin ini produk yang mana. "
         "Boleh sebutkan nama produknya ya?"
     )
+    _no_visual_match_reply = (
+        "Maaf Kak, Waku belum menemukan produk yang mirip dengan foto ini di katalog kami 🙏 "
+        "Boleh sebutkan nama produk yang Kakak cari?"
+    )
 
-    names = [p.get("name", "") for p in catalog if p.get("name")]
+    # Only items that have both image_b64 and name can be visually compared; cap at 8.
+    items = [p for p in (catalog or []) if p.get("image_b64") and p.get("name")][:8]
 
-    if not names:
-        return {"matched": False, "product_name": "", "price": 0.0, "reply": _not_matched_reply}
+    if not items:
+        return {"matched": False, "product_name": "", "price": 0.0, "reply": _no_image_reply}
 
-    # Normalize to data URI
+    # Normalize customer image to data URI
     if image_b64.startswith("data:"):
-        data_uri = image_b64
+        customer_uri = image_b64
     else:
-        data_uri = f"data:{mime_type};base64,{image_b64}"
+        customer_uri = f"data:{mime_type};base64,{image_b64}"
+
+    def _to_data_uri(b64: str, mt: str) -> str:
+        if b64.startswith("data:"):
+            return b64
+        return f"data:{mt};base64,{b64}"
+
+    # Build multi-image vision message
+    user_content: list[dict] = [
+        {"type": "text", "text": "FOTO PELANGGAN:"},
+        {"type": "image_url", "image_url": {"url": customer_uri}},
+    ]
+    for item in items:
+        item_uri = _to_data_uri(item["image_b64"], item.get("mime_type", "image/jpeg"))
+        user_content.append({"type": "text", "text": f"Produk katalog: {item['name']}"})
+        user_content.append({"type": "image_url", "image_url": {"url": item_uri}})
+
+    user_content.append({
+        "type": "text",
+        "text": (
+            f"Caption pelanggan: '{caption}'. "
+            "Produk katalog mana yang FOTONYA paling mirip dengan FOTO PELANGGAN? "
+            "Jawab nama persis dari daftar, atau NONE jika tidak ada yang mirip."
+        ),
+    })
 
     messages = [
         {
             "role": "system",
             "content": (
                 "Kamu adalah Waku, asisten AI untuk UMKM Indonesia. "
-                "Tugasmu mengidentifikasi produk dalam foto berdasarkan daftar katalog yang diberikan. "
-                "Jawab dengan TEPAT salah satu nama produk dari daftar, atau kata NONE jika tidak ada yang cocok."
+                "Kamu akan melihat FOTO PELANGGAN dan beberapa foto produk katalog. "
+                "Jawab dengan nama PERSIS salah satu produk katalog yang FOTONYA secara visual mirip "
+                "dengan foto pelanggan. Jika tidak ada yang mirip secara visual, jawab tepat kata NONE. "
+                "Jangan menebak hanya dari nama — bandingkan foto secara visual."
             ),
         },
         {
             "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Daftar produk: {', '.join(names)}. "
-                        f"Caption pelanggan: '{caption}'. "
-                        "Produk mana yang ada di foto ini? Jawab persis salah satu nama dari daftar, atau NONE."
-                    ),
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": data_uri},
-                },
-            ],
+            "content": user_content,
         },
     ]
 
-    answer = call_openai(messages, max_tokens=200, temperature=0.0)
+    answer = call_openai(messages, max_tokens=30, temperature=0.0)
 
     if not answer or not answer.strip():
         logger.warning("match_image_to_catalog: no answer from LLM (text-only model?)")
-        return {"matched": False, "product_name": "", "price": 0.0, "reply": _not_matched_reply}
+        return {"matched": False, "product_name": "", "price": 0.0, "reply": _text_only_reply}
 
     answer_stripped = answer.strip()
-
-    # Try to find a matching catalog product
-    matched_product = None
     answer_lower = answer_stripped.lower()
 
-    # Exact case-insensitive match first
-    for p in catalog:
+    # NONE check before name matching
+    if "none" in answer_lower:
+        return {"matched": False, "product_name": "", "price": 0.0, "reply": _no_visual_match_reply}
+
+    # Try to find matching item — exact case-insensitive first
+    matched_product = None
+    for p in items:
         if p.get("name", "").lower() == answer_lower:
             matched_product = p
             break
 
-    # Substring match fallback
+    # Substring match fallback (either direction)
     if matched_product is None:
-        for p in catalog:
+        for p in items:
             name_lower = p.get("name", "").lower()
             if name_lower and (name_lower in answer_lower or answer_lower in name_lower):
                 matched_product = p
                 break
 
-    # NONE or no match
-    if matched_product is None or "none" in answer_lower:
-        return {"matched": False, "product_name": "", "price": 0.0, "reply": _not_matched_reply}
+    if matched_product is None:
+        return {"matched": False, "product_name": "", "price": 0.0, "reply": _no_visual_match_reply}
 
     name = matched_product.get("name", "")
     price = float(matched_product.get("price", 0) or 0)
