@@ -485,25 +485,24 @@ async def _handle_inbound_image(session: AsyncSession, business: Business, custo
 
 
 def _load_product_image_b64(image_url: Optional[str]) -> Optional[tuple[str, str]]:
-    """Return (base64, mime_type) for a product image, or None.
-    Handles local /uploads/ files and remote http(s) URLs."""
-    if not image_url:
+    """Return (base64, mime_type) for a LOCAL product image, or None.
+
+    Only resolves images stored under /uploads/ (uploaded via /api/upload).
+    Remote URLs are NOT fetched — a tenant-controlled image_url would otherwise
+    let the server fetch arbitrary internal/metadata endpoints (SSRF). Products
+    that want visual matching must upload their photo. Externally-hosted
+    image_url simply doesn't participate in visual matching.
+    """
+    if not image_url or not image_url.startswith("/uploads/"):
         return None
     _MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
     try:
-        if image_url.startswith("/uploads/"):
-            path = os.path.join(UPLOAD_DIR, os.path.basename(image_url))
-            if not os.path.exists(path):
-                return None
-            ext = os.path.splitext(path)[1].lower()
-            with open(path, "rb") as f:
-                return base64.b64encode(f.read()).decode(), _MIME.get(ext, "image/jpeg")
-        if image_url.startswith("http://") or image_url.startswith("https://"):
-            with httpx.Client(timeout=10) as client:
-                r = client.get(image_url)
-                r.raise_for_status()
-                mime = r.headers.get("content-type", "image/jpeg").split(";")[0]
-                return base64.b64encode(r.content).decode(), mime
+        path = os.path.join(UPLOAD_DIR, os.path.basename(image_url))
+        if not os.path.exists(path):
+            return None
+        ext = os.path.splitext(path)[1].lower()
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode(), _MIME.get(ext, "image/jpeg")
     except Exception:
         logger.warning("Could not load product image %s", image_url)
     return None
