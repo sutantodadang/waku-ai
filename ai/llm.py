@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from typing import Optional
 
@@ -10,6 +11,8 @@ import httpx
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 # ──────────────────────────────────────────────
 #  System prompt — Indonesian UMKM style
@@ -67,6 +70,29 @@ def get_fallback_response(intent: str) -> str:
 
 
 # ──────────────────────────────────────────────
+#  Content extraction helper
+# ──────────────────────────────────────────────
+
+def _extract_content(data: dict) -> Optional[str]:
+    """Assistant text from an OpenAI-compatible chat response. Falls back to
+    `reasoning_content` (stripped of <think> blocks) for reasoning models
+    (e.g. nemotron-nano) that leave `content` empty."""
+    try:
+        msg = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return None
+    content = msg.get("content")
+    if content and content.strip():
+        return content.strip()
+    reasoning = msg.get("reasoning_content")
+    if reasoning and reasoning.strip():
+        cleaned = _THINK_RE.sub("", reasoning).strip()
+        if cleaned:
+            return cleaned
+    return None
+
+
+# ──────────────────────────────────────────────
 #  OpenAI-compatible API caller
 # ──────────────────────────────────────────────
 
@@ -97,7 +123,11 @@ def call_openai(messages: list[dict], model: Optional[str] = None, temperature: 
             )
             resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            content = _extract_content(data)
+            if content:
+                return content
+            logger.warning("OpenAI 200 but no usable content; raw=%.300s", json.dumps(data)[:300])
+            return None
     except httpx.HTTPStatusError as e:
         logger.error(f"OpenAI API HTTP error: {e.response.status_code} {e.response.text}")
     except httpx.RequestError as e:
@@ -168,25 +198,28 @@ def ask_llm(messages: list[dict], intent: str = "UNKNOWN",
     """
     full_messages = [{"role": "system", "content": system_prompt or SYSTEM_PROMPT}]
     full_messages.extend(messages)
+    provider = settings.llm_provider
 
-    response = None
-
-    # Try OpenAI first if configured and allowed
+    # OpenAI-compatible path
     if settings.use_openai:
         response = call_openai(full_messages, temperature=temperature, max_tokens=max_tokens)
-        if response:
+        if response and response.strip():
             logger.info("Used OpenAI-compatible API")
             return response
+        if provider == "openai":
+            # Explicitly OpenAI-only: do NOT fall back to Ollama.
+            logger.warning(f"OpenAI returned no usable content; rule fallback for intent={intent}")
+            return get_fallback_response(intent)
 
-    # Fallback to Ollama
-    try:
-        response = call_ollama(full_messages, temperature=temperature, max_tokens=max_tokens)
-        if response:
-            logger.info("Used Ollama")
-            return response
-    except Exception as e:
-        logger.warning(f"Ollama call failed: {e}")
+    # Ollama path (auto or ollama only — never when provider is openai)
+    if provider != "openai":
+        try:
+            response = call_ollama(full_messages, temperature=temperature, max_tokens=max_tokens)
+            if response and response.strip():
+                logger.info("Used Ollama")
+                return response
+        except Exception as e:
+            logger.warning(f"Ollama call failed: {e}")
 
-    # Ultimate fallback: rule-based
     logger.warning(f"LLM unavailable, using fallback for intent={intent}")
     return get_fallback_response(intent)
