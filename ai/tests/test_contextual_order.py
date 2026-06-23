@@ -53,6 +53,29 @@ def test_no_context_guard_no_order_fabricated(monkeypatch):
     assert "Parfum" in r1 or "menu" in r1.lower(), f"Expected menu fallback, got: {r1!r}"
 
 
+def test_quantity_detached_from_product_name(monkeypatch):
+    """'boleh parfumnya, aku mau pesen 2 ya' → qty 2 even though '2' isn't adjacent to the name."""
+    monkeypatch.setattr(conv_mod, "ask_llm", lambda *a, **k: "LLM_FALLBACK")
+    mgr = conv_mod.ConversationManager()
+    monkeypatch.setattr(conv_mod, "manager", mgr)
+
+    r = conv_mod.generate_reply("s4", "boleh parfumnya, aku mau pesen 2 ya", catalog=CATALOG)
+
+    assert r != "LLM_FALLBACK", f"Fell through to LLM; got: {r!r}"
+    assert "Parfum" in r, f"Product name missing: {r!r}"
+    assert "x2" in r, f"Quantity should be 2: {r!r}"
+    conv = mgr.get("s4")
+    assert conv.order.active is True
+
+
+def test_nlu_single_product_detached_number(monkeypatch):
+    """Unit: analyze_message pairs a lone detached number with a single product."""
+    from nlu import analyze_message
+    a = analyze_message("boleh parfumnya, aku mau pesen 2 ya", catalog_items=["Parfum"])
+    assert a["entities"]["product_names"] == ["Parfum"]
+    assert a["entities"]["product_quantities"] == [2]
+
+
 def test_last_product_field_set_after_stock_inquiry(monkeypatch):
     """last_product is populated after a product is mentioned in inquiry."""
     monkeypatch.setattr(conv_mod, "ask_llm", lambda *a, **k: "LLM_FALLBACK")

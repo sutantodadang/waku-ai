@@ -274,6 +274,14 @@ def extract_entities(text: str, catalog_items: Optional[list[str]] = None) -> di
                         qty = num
                         break
         product_quantities.append(qty)
+    # Quantity stated apart from the product name ("parfumnya, aku mau pesen 2"):
+    # the adjacency scan above only sees numbers touching the name. When there is a
+    # single product and we defaulted to 1, adopt the lone bare number in the message
+    # (sub-1000 so prices/phones don't leak in) as the quantity.
+    if len(result["product_names"]) == 1 and product_quantities == [1]:
+        bare = [int(n) for n in re.findall(r"\b(\d+)\b", text_lower) if int(n) < 1000]
+        if len(bare) == 1:
+            product_quantities = [bare[0]]
     result["product_quantities"] = product_quantities
 
     # Raw numbers (all digits found)

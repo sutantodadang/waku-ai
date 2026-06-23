@@ -37,3 +37,7 @@ Thumbs.db
 .env.production
 .superpowers/
 .remember/
+
+# Runtime uploads (QRIS + inbound media)
+backend/uploads/*
+!backend/uploads/.gitkeep

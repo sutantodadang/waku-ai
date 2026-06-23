@@ -288,7 +288,8 @@ def parse_statuses(payload: dict) -> list[dict]:
 def parse_whatsapp_message(payload: dict) -> list[dict]:
     """
     Extract inbound messages from a Meta webhook payload.
-    Returns a list of dicts with keys: from_number, message_id, text, timestamp.
+    Returns a list of dicts with keys: from_number, message_id, text, timestamp,
+    type, media_id, caption.
     """
     messages: list[dict] = []
     try:
@@ -298,15 +299,58 @@ def parse_whatsapp_message(payload: dict) -> list[dict]:
                 if value.get("messaging_product") != "whatsapp":
                     continue
                 for msg in value.get("messages", []):
+                    mtype = msg.get("type", "text")
+                    text = ""
+                    media_id = None
+                    caption = ""
+                    if mtype == "text":
+                        text = msg.get("text", {}).get("body", "")
+                    elif mtype == "image":
+                        img = msg.get("image", {})
+                        media_id = img.get("id")
+                        caption = img.get("caption", "")
+                        text = caption  # caption searchable as text
                     messages.append({
                         "from_number": msg.get("from"),
                         "message_id": msg.get("id"),
-                        "text": msg.get("text", {}).get("body", ""),
+                        "text": text,
                         "timestamp": msg.get("timestamp"),
+                        "type": mtype,
+                        "media_id": media_id,
+                        "caption": caption,
                     })
     except Exception as exc:
         logger.error("Failed to parse webhook payload: %s", exc)
     return messages
+
+
+async def download_media(
+    media_id: str,
+    *,
+    phone_number_id: Optional[str] = None,
+    access_token: Optional[str] = None,
+):
+    """Fetch a WhatsApp media object: GET /{media_id} for its URL, then download the bytes.
+    Returns (content_bytes, mime_type) or None on any failure."""
+    pid, token = _resolve_credentials(phone_number_id, access_token)
+    if not token:
+        return None
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            meta = await client.get(f"{GRAPH_BASE}/{media_id}", headers=headers)
+            meta.raise_for_status()
+            j = meta.json()
+            url = j.get("url")
+            mime = j.get("mime_type", "image/jpeg")
+            if not url:
+                return None
+            media = await client.get(url, headers=headers)
+            media.raise_for_status()
+            return media.content, mime
+    except Exception:
+        logger.warning("Failed to download media %s", media_id)
+        return None
 
 
 # ── 24-hour service window ───────────────────────────────────────────────────────

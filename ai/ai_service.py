@@ -103,6 +103,21 @@ class EmbedResponse(BaseModel):
     vectors: list[list[float]] = Field(default_factory=list)
 
 
+class MatchImageRequest(BaseModel):
+    image_b64: str
+    mime_type: str = "image/jpeg"
+    caption: str = ""
+    catalog: list[dict] = Field(default_factory=list)
+    business_type: str = "warung"
+
+
+class MatchImageResponse(BaseModel):
+    matched: bool = False
+    product_name: str = ""
+    price: float = 0.0
+    reply: str = ""
+
+
 # ──────────────────────────────────────────────
 #  Endpoints
 # ──────────────────────────────────────────────
@@ -204,6 +219,18 @@ async def ai_catalog_search(request: CatalogSearchRequest):
         }
     except Exception as e:
         logger.exception(f"Error in /ai/catalog-search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/ai/match-image", response_model=MatchImageResponse, dependencies=[Depends(require_secret)])
+async def ai_match_image(request: MatchImageRequest):
+    """Match a customer-sent product image to the business catalog using a vision LLM."""
+    from llm import match_image_to_catalog
+    try:
+        result = match_image_to_catalog(request.image_b64, request.mime_type, request.caption, request.catalog)
+        return MatchImageResponse(**result)
+    except Exception as e:
+        logger.exception(f"Error in /ai/match-image: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

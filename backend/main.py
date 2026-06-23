@@ -4,6 +4,7 @@ Indonesian MSMEs order management through WhatsApp.
 """
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
@@ -57,6 +58,7 @@ from schemas import (
     SendPaymentResponse,
     StaffCreate,
     StaffResponse,
+    QrisGenerateRequest,
     UploadResponse,
     UserLogin,
     UserRegister,
@@ -65,6 +67,7 @@ from schemas import (
 )
 from services.whatsapp import (
     PLATFORM_PHONE_NUMBER_ID,
+    download_media,
     exchange_code_for_token,
     extract_phone_number_id,
     parse_statuses,
@@ -306,68 +309,92 @@ async def webhook_post(request: Request):
     return {"status": "ok", "messages_processed": len(incoming_messages)}
 
 
+async def _reply_to_text(
+    session: AsyncSession,
+    business: Business,
+    customer: Customer,
+    text: str,
+    message_id: str,
+    *,
+    save_inbound: bool = True,
+) -> None:
+    """Run the conversational reply pipeline for one inbound text (or image caption)."""
+    if save_inbound:
+        await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
+
+    reply, ai_order, ai_booking, ai_ok = await _generate_ai_reply(
+        session, business, customer.phone_number, text, customer=customer
+    )
+
+    send_payment_after = False
+    if business.business_type in ("salon", "wedding"):
+        if ai_booking and ai_booking.get("status") == "closed":
+            await _persist_ai_booking(session, business, customer, ai_booking)
+    elif ai_order and ai_order.get("status") == "closed":
+        await _persist_ai_order(session, business, customer, ai_order)
+        # Defer payment until AFTER the confirm reply is sent (better UX).
+        send_payment_after = True
+    elif (not ai_ok) and _AI_FALLBACK_ORDER_REGEX:
+        # AI unreachable → degraded regex fallback so orders aren't lost.
+        products = (await session.execute(
+            select(Product).where(Product.business_id == business.id)
+        )).scalars().all()
+        known = {p.name: p.price for p in products}
+        regex_items = extract_order_from_message(text, known or None)
+        if regex_items:
+            await create_order(session, business.id, customer.id, regex_items)
+            try:
+                await recompute_customer_stats(session, customer.id)
+            except Exception:
+                logger.exception("recompute failed")
+
+    # On-demand payment: customer asked how to pay → send payment info.
+    if any(kw in text.lower() for kw in (
+        "cara bayar", "gimana bayar", "bayar gimana",
+        "pembayaran", "no rekening", "nomor rekening",
+    )):
+        _order = await find_amendable_order(session, business.id, customer.id)
+        _total = _order.total if _order else 0.0
+        try:
+            await send_payment_info(session, business, customer, _total)
+        except Exception:
+            logger.exception("On-demand payment send failed")
+
+    reply = f"{reply}{AI_REPLY_FOOTER}"
+
+    await send_message(
+        customer.phone_number, reply,
+        phone_number_id=business.phone_number_id,
+        access_token=business.access_token,
+    )
+    await save_message(session, business.id, customer.id, reply, "outbound")
+    if send_payment_after:
+        await _maybe_send_payment(session, business, customer)
+
+
 async def _process_tenant_messages(session: AsyncSession, business: Business, messages: list[dict]) -> None:
     """Persist + AI-reply + send for each customer message of a business."""
     for msg in messages:
         from_number = msg.get("from_number", "")
-        text = msg.get("text", "")
-        message_id = msg.get("message_id", "")
-        if not from_number or not text:
+        if not from_number:
             continue
 
-        logger.info("Processing message from %s for business %d: %.80s", from_number, business.id, text)
+        msg_type = msg.get("type", "text")
+        message_id = msg.get("message_id", "")
+
+        logger.info("Processing %s message from %s for business %d", msg_type, from_number, business.id)
         try:
             customer = await get_or_create_customer(session, business.id, from_number)
-            await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
 
-            reply, ai_order, ai_booking, ai_ok = await _generate_ai_reply(
-                session, business, customer.phone_number, text, customer=customer
-            )
+            if msg_type == "image" and msg.get("media_id"):
+                await _handle_inbound_image(session, business, customer, msg)
+                continue
 
-            send_payment_after = False
-            if business.business_type in ("salon", "wedding"):
-                if ai_booking and ai_booking.get("status") == "closed":
-                    await _persist_ai_booking(session, business, customer, ai_booking)
-            elif ai_order and ai_order.get("status") == "closed":
-                await _persist_ai_order(session, business, customer, ai_order)
-                # Defer payment until AFTER the confirm reply is sent (better UX).
-                send_payment_after = True
-            elif (not ai_ok) and _AI_FALLBACK_ORDER_REGEX:
-                # AI unreachable → degraded regex fallback so orders aren't lost.
-                products = (await session.execute(
-                    select(Product).where(Product.business_id == business.id)
-                )).scalars().all()
-                known = {p.name: p.price for p in products}
-                regex_items = extract_order_from_message(text, known or None)
-                if regex_items:
-                    await create_order(session, business.id, customer.id, regex_items)
-                    try:
-                        await recompute_customer_stats(session, customer.id)
-                    except Exception:
-                        logger.exception("recompute failed")
+            text = msg.get("text", "")
+            if not text:
+                continue
 
-            # On-demand payment: customer asked how to pay → send payment info.
-            if any(kw in text.lower() for kw in (
-                "cara bayar", "gimana bayar", "bayar gimana",
-                "pembayaran", "no rekening", "nomor rekening",
-            )):
-                _order = await find_amendable_order(session, business.id, customer.id)
-                _total = _order.total if _order else 0.0
-                try:
-                    await send_payment_info(session, business, customer, _total)
-                except Exception:
-                    logger.exception("On-demand payment send failed")
-
-            reply = f"{reply}{AI_REPLY_FOOTER}"
-
-            await send_message(
-                from_number, reply,
-                phone_number_id=business.phone_number_id,
-                access_token=business.access_token,
-            )
-            await save_message(session, business.id, customer.id, reply, "outbound")
-            if send_payment_after:
-                await _maybe_send_payment(session, business, customer)
+            await _reply_to_text(session, business, customer, text, message_id, save_inbound=True)
         except Exception as exc:
             logger.exception("Error processing message from %s: %s", from_number, exc)
             try:
@@ -378,6 +405,142 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
                 )
             except Exception:
                 logger.error("Failed to send error reply to %s", from_number)
+
+
+async def _handle_inbound_image(session: AsyncSession, business: Business, customer: Customer, msg: dict) -> None:
+    """Download, persist, match, and reply for an inbound image message."""
+    from_number = customer.phone_number
+    message_id = msg.get("message_id", "")
+    caption = msg.get("caption", "")
+
+    result = await download_media(
+        msg["media_id"],
+        phone_number_id=business.phone_number_id,
+        access_token=business.access_token,
+    )
+
+    if result is None:
+        caption_stripped = caption.strip() if caption else ""
+        if caption_stripped:
+            await _reply_to_text(session, business, customer, caption_stripped, message_id, save_inbound=True)
+            return
+        await save_message(session, business.id, customer.id, "[gambar]", "inbound", wamid=message_id)
+        reply = (
+            "Waku terima gambarnya Kak 🙏 "
+            "Tapi Waku belum bisa memproses gambar sekarang. "
+            "Boleh sebutkan produk yang Kakak maksud?"
+            + AI_REPLY_FOOTER
+        )
+        await send_message(from_number, reply, phone_number_id=business.phone_number_id, access_token=business.access_token)
+        await save_message(session, business.id, customer.id, reply, "outbound")
+        return
+
+    content_bytes, mime = result
+
+    # Derive extension from mime type
+    ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/webp": ".webp"}
+    ext = ext_map.get(mime, ".jpg")
+    safe_name = f"inbound_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}{ext}"
+    dest = os.path.join(UPLOAD_DIR, safe_name)
+    with open(dest, "wb") as f:
+        f.write(content_bytes)
+    media_url = f"/uploads/{safe_name}"
+
+    await save_message(
+        session, business.id, customer.id, caption or "[gambar]", "inbound",
+        wamid=message_id, media_url=media_url,
+    )
+
+    # Load catalog for AI matching
+    products = (await session.execute(
+        select(Product).where(Product.business_id == business.id)
+    )).scalars().all()
+    catalog = []
+    img_count = 0
+    for p in products:
+        item = {"name": p.name, "price": p.price, "image_url": p.image_url}
+        if img_count < 8:
+            loaded = _load_product_image_b64(p.image_url)
+            if loaded:
+                item["image_b64"], item["mime_type"] = loaded
+                img_count += 1
+        catalog.append(item)
+    if img_count == 0:
+        logger.info("No catalog product images available for visual match (business %d)", business.id)
+    elif len([p for p in products if p.image_url]) > 8:
+        logger.info("Catalog visual match capped at 8 images (business %d)", business.id)
+
+    match = await _match_image_with_ai(business, content_bytes, mime, caption, catalog)
+    matched_name = match.get("product_name") or ""
+    caption_stripped = (caption or "").strip()
+    if matched_name and caption_stripped:
+        # Visual match AND the customer asked something — answer naturally, grounded.
+        grounded = f"{caption_stripped}\n(Pelanggan mengirim foto produk yang dikenali: {matched_name})"
+        await _reply_to_text(session, business, customer, grounded, message_id, save_inbound=False)
+    else:
+        # No visual match (not-available reply) OR matched-but-no-caption (confirm template).
+        reply = f"{match.get('reply') or 'Waku terima gambarnya Kak 🙏'}{AI_REPLY_FOOTER}"
+        await send_message(from_number, reply, phone_number_id=business.phone_number_id, access_token=business.access_token)
+        await save_message(session, business.id, customer.id, reply, "outbound")
+
+
+def _load_product_image_b64(image_url: Optional[str]) -> Optional[tuple[str, str]]:
+    """Return (base64, mime_type) for a LOCAL product image, or None.
+
+    Only resolves images stored under /uploads/ (uploaded via /api/upload).
+    Remote URLs are NOT fetched — a tenant-controlled image_url would otherwise
+    let the server fetch arbitrary internal/metadata endpoints (SSRF). Products
+    that want visual matching must upload their photo. Externally-hosted
+    image_url simply doesn't participate in visual matching.
+    """
+    if not image_url or not image_url.startswith("/uploads/"):
+        return None
+    _MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+    try:
+        path = os.path.join(UPLOAD_DIR, os.path.basename(image_url))
+        if not os.path.exists(path):
+            return None
+        ext = os.path.splitext(path)[1].lower()
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode(), _MIME.get(ext, "image/jpeg")
+    except Exception:
+        logger.warning("Could not load product image %s", image_url)
+    return None
+
+
+async def _match_image_with_ai(
+    business: Business,
+    image_bytes: bytes,
+    mime: str,
+    caption: str,
+    catalog: list[dict],
+) -> dict:
+    """POST to AI service /ai/match-image and return the response dict."""
+    payload = {
+        "image_b64": base64.b64encode(image_bytes).decode(),
+        "mime_type": mime,
+        "caption": caption or "",
+        "catalog": catalog,
+        "business_type": business.business_type,
+    }
+    headers = {"X-Waku-Secret": AI_SERVICE_SECRET} if AI_SERVICE_SECRET else {}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{AI_SERVICE_URL}/ai/match-image", json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as exc:
+        logger.warning("AI match-image failed: %s", exc)
+        return {
+            "matched": False,
+            "product_name": "",
+            "price": 0.0,
+            "reply": (
+                "Waku terima gambarnya Kak 🙏 "
+                "Tapi Waku belum yakin ini produk yang mana. "
+                "Boleh sebutkan nama produknya ya?"
+            ),
+        }
 
 
 def _normalize_phone(phone: str) -> str:
@@ -1273,6 +1436,22 @@ async def dashboard_upload_image(file: UploadFile = File(...)):
     with open(dest, "wb") as f:
         f.write(content)
 
+    return UploadResponse(url=f"/uploads/{safe_name}")
+
+
+@app.post("/api/qris/generate", response_model=UploadResponse)
+async def generate_qris(body: QrisGenerateRequest):
+    """POST /api/qris/generate — render a QRIS payload string to a PNG and return its public URL."""
+    payload = (body.payload or "").strip()
+    if not payload:
+        raise HTTPException(status_code=422, detail="QRIS payload kosong.")
+    import segno
+    safe_name = f"qris_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
+    dest = os.path.join(UPLOAD_DIR, safe_name)
+    try:
+        segno.make(payload, error="m").save(dest, scale=8, border=2)
+    except Exception:
+        raise HTTPException(status_code=422, detail="Gagal membuat QR dari payload QRIS.")
     return UploadResponse(url=f"/uploads/{safe_name}")
 
 

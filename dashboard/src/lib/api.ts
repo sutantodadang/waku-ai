@@ -139,4 +139,16 @@ export const api = {
     const data = (await res.json()) as { url: string };
     return BASE + data.url;
   },
+
+  // ── QRIS generate (JSON) ──
+  async generateQris(payload: string): Promise<string> {
+    const res = await fetch(BASE + "/api/qris/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payload }),
+    });
+    if (!res.ok) throw new ApiError(res.status, "Gagal membuat QR dari payload QRIS.");
+    const data = (await res.json()) as { url: string };
+    return BASE + data.url;
+  },
 };

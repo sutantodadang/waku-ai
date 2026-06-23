@@ -219,6 +219,7 @@ async def save_message(
     content: str,
     direction: str,
     wamid: Optional[str] = None,
+    media_url: Optional[str] = None,
 ) -> Message:
     """Persist a message to the database."""
     msg = Message(
@@ -227,6 +228,7 @@ async def save_message(
         content=content,
         direction=direction,
         wamid=wamid,
+        media_url=media_url,
     )
     session.add(msg)
     await session.flush()

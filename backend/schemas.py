@@ -285,6 +285,11 @@ class UploadResponse(BaseModel):
     url: str
 
 
+class QrisGenerateRequest(BaseModel):
+    """POST /api/qris/generate — QRIS payload string to render as PNG."""
+    payload: str
+
+
 class SendPaymentResponse(BaseModel):
     """POST /api/orders/{id}/send-payment response."""
     sent: bool
