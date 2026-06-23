@@ -1,5 +1,6 @@
 import { authStore } from "./auth";
 import type {
+  Booking,
   BusinessProfile,
   BusinessType,
   Customer,
@@ -102,6 +103,14 @@ export const api = {
   deleteStaff: (id: number) => req<{ ok: boolean }>(`/api/staff/${id}`, { method: "DELETE" }),
   sendOrderPayment: (id: number) =>
     req<{ sent: boolean }>(`/api/orders/${id}/send-payment`, { method: "POST" }),
+
+  // ── Bookings ──
+  listBookings: (q?: { status?: string; date?: string }) =>
+    req<Booking[]>(`/api/bookings${q?.status || q?.date ? "?" + new URLSearchParams(q as Record<string, string>) : ""}`),
+  updateBooking: (id: number, d: { status?: string; scheduled_at?: string; staff_id?: number }) =>
+    req<Booking>(`/api/bookings/${id}`, { method: "PATCH", ...body(d) }),
+  remindBooking: (id: number) => req<{ sent: boolean }>(`/api/bookings/${id}/remind`, { method: "POST" }),
+  sendBookingPayment: (id: number) => req<{ sent: boolean }>(`/api/bookings/${id}/send-payment`, { method: "POST" }),
 
   // ── WhatsApp ──
   whatsappStatus: () => req<WhatsAppConnection>("/api/whatsapp/status"),

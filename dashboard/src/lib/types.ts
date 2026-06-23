@@ -117,3 +117,18 @@ export interface BusinessProfile {
   payment_methods?: PaymentMethod[];
   qris_image_url?: string | null;
 }
+
+export interface Booking {
+  id: number;
+  customer_name: string;
+  staff_id: number | null;
+  items: { name: string; price: number; duration_minutes?: number | null }[];
+  total: number;
+  deposit_amount: number | null;
+  scheduled_at: string | null;
+  duration_minutes: number | null;
+  status: "requested" | "confirmed" | "rejected" | "completed" | "cancelled";
+  notes: string | null;
+  clash: boolean;
+  created_at: string;
+}

@@ -12,6 +12,7 @@ export const keys = {
   customers: ["customers"] as const,
   customer: (id: number) => ["customer", id] as const,
   staff: ["staff"] as const,
+  bookings: ["bookings"] as const,
 };
 
 export const useSummary = () => useQuery({ queryKey: keys.summary, queryFn: api.summary });
@@ -116,4 +117,32 @@ export function useDeleteStaff() {
 
 export function useSendOrderPayment() {
   return useMutation({ mutationFn: (id: number) => api.sendOrderPayment(id) });
+}
+
+export const useBookings = (q?: { status?: string; date?: string }) =>
+  useQuery({ queryKey: keys.bookings, queryFn: () => api.listBookings(q) });
+
+export function useUpdateBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, d }: { id: number; d: { status?: string; scheduled_at?: string; staff_id?: number } }) =>
+      api.updateBooking(id, d),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.bookings }),
+  });
+}
+
+export function useRemindBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.remindBooking(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.bookings }),
+  });
+}
+
+export function useSendBookingPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.sendBookingPayment(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.bookings }),
+  });
 }
