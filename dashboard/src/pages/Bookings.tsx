@@ -142,6 +142,7 @@ export default function Bookings() {
 
   const tomorrow = data?.filter((b) => isTomorrow(b.scheduled_at)) ?? [];
   const all = data ?? [];
+  const rest = all.filter((b) => !isTomorrow(b.scheduled_at));
 
   return (
     <div>
@@ -162,14 +163,16 @@ export default function Bookings() {
       )}
 
       <section>
-        <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-ink/45">Semua Booking</h2>
+        <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-ink/45">
+          {tomorrow.length > 0 ? "Booking Lainnya" : "Semua Booking"}
+        </h2>
         {all.length === 0 && !isLoading && (
           <Card>
             <p className="text-sm text-ink/55">Belum ada booking.</p>
           </Card>
         )}
         <div className="space-y-3">
-          {all.map((b) => (
+          {rest.map((b) => (
             <BookingCard key={b.id} b={b} />
           ))}
         </div>
