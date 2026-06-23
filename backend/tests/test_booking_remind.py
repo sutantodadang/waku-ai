@@ -45,3 +45,49 @@ def test_remind_skips_outside_window(client, monkeypatch):
     bid = _seed(client, t["access_token"], with_inbound=False)  # no inbound → window closed
     r = client.post(f"/api/bookings/{bid}/remind", headers=auth(t["access_token"]))
     assert r.status_code == 200 and r.json()["sent"] is False
+
+
+def test_remind_send_failure_returns_false(client, monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(main, "send_message", boom)
+    t = register(client)
+    connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
+    bid = _seed(client, t["access_token"], with_inbound=True)  # window open
+    r = client.post(f"/api/bookings/{bid}/remind", headers=auth(t["access_token"]))
+    assert r.status_code == 200 and r.json()["sent"] is False
+
+
+def test_send_payment_delegates(client, monkeypatch):
+    captured = {}
+    async def cap_pay(session, business, customer, amount):
+        captured["amount"] = amount
+        return True
+    monkeypatch.setattr(main, "send_payment_info", cap_pay)
+    t = register(client)
+    connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
+    bid = _seed(client, t["access_token"], with_inbound=True)
+    r = client.post(f"/api/bookings/{bid}/send-payment", headers=auth(t["access_token"]))
+    assert r.status_code == 200 and r.json()["sent"] is True
+    assert captured["amount"] == 80000  # no deposit → total
+
+
+def test_send_payment_exception_returns_false(client, monkeypatch):
+    async def boom(*a, **k):
+        raise RuntimeError("send blew up")
+    monkeypatch.setattr(main, "send_payment_info", boom)
+    t = register(client)
+    connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
+    bid = _seed(client, t["access_token"], with_inbound=True)
+    r = client.post(f"/api/bookings/{bid}/send-payment", headers=auth(t["access_token"]))
+    assert r.status_code == 200 and r.json()["sent"] is False
+
+
+def test_cross_tenant_booking_404(client):
+    t = register(client)
+    connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
+    bid = _seed(client, t["access_token"], with_inbound=True)
+    other = register(client, email="b@x.com", phone="082222222222")  # second tenant
+    for path in (f"/api/bookings/{bid}/remind", f"/api/bookings/{bid}/send-payment"):
+        r = client.post(path, headers=auth(other["access_token"]))
+        assert r.status_code == 404

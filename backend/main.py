@@ -1382,5 +1382,9 @@ async def send_booking_payment(
 ):
     booking, customer = await _load_booking(session, business, booking_id)
     amount = booking.deposit_amount if booking.deposit_amount else booking.total
-    sent = await send_payment_info(session, business, customer, amount)
+    try:
+        sent = await send_payment_info(session, business, customer, amount)
+    except Exception:
+        logger.exception("Payment send failed for booking %d", booking.id)
+        sent = False
     return SendPaymentResponse(sent=sent)
