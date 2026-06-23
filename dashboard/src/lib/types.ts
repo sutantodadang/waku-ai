@@ -27,6 +27,14 @@ export interface DashboardSummary {
 
 export type OrderStatus = "baru" | "diproses" | "selesai" | "dibatalkan";
 
+export type BusinessType = "warung" | "salon" | "wedding";
+
+export interface Staff {
+  id: number;
+  name: string;
+  active: boolean;
+}
+
 export interface OrderItem {
   name?: string;
   quantity?: number;
@@ -50,6 +58,7 @@ export interface Product {
   price: number;
   description: string | null;
   image_url: string | null;
+  duration_minutes?: number | null;
   created_at: string;
 }
 
@@ -104,6 +113,7 @@ export interface PaymentMethod {
 
 export interface BusinessProfile {
   business_name: string;
+  business_type?: BusinessType;
   payment_methods?: PaymentMethod[];
   qris_image_url?: string | null;
 }
