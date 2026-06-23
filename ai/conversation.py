@@ -59,6 +59,7 @@ class Conversation:
     messages: list[dict] = field(default_factory=lambda: deque(maxlen=MAX_CONTEXT))
     order: OrderState = field(default_factory=OrderState)
     catalog: list[dict] = field(default_factory=list)
+    last_product: Optional[str] = None
     closed_order: Optional[dict] = None
     closed_booking: Optional[dict] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -153,6 +154,11 @@ def generate_reply(session_id: str, incoming_message: str,
 
     logger.info(f"[{session_id}] Intent={intent}, Entities={entities}")
 
+    # Track the last product the customer mentioned (any intent), so subsequent
+    # turns can carry it forward into an order without re-stating the product name.
+    if entities["product_names"]:
+        conv.last_product = entities["product_names"][-1]
+
     conv.add_message("user", incoming_message)
 
     # ── Guardrail: block injection / oversized input before any LLM call ──
@@ -220,6 +226,24 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
                 conv.order.add_item(name, qty, price)
             return (f"Baik Kak! Waku catat dulu ya:\n{conv.order.summary()}\n"
                     "Ada lagi yang mau dipesan? 🙏")
+
+        # Carry the product the customer just asked about: "apakah parfum ada?" → "aku mau 10".
+        if not product_names and conv.last_product:
+            price = 0.0
+            matched = None
+            for item in conv.catalog:
+                if item.get("name", "").lower() == conv.last_product.lower():
+                    matched = item.get("name")
+                    price = float(item.get("price", 0))
+                    break
+            if matched:
+                nums = analysis["entities"].get("raw_numbers") or []
+                qty = nums[0] if nums else 1
+                conv.order.active = True
+                conv.order.started_at = datetime.now().isoformat()
+                conv.order.add_item(matched, qty, price)
+                return (f"Baik Kak! Waku catat dulu ya:\n{conv.order.summary()}\n"
+                        "Ada lagi yang mau dipesan? 🙏")
 
         # No catalog product recognized. Don't open an empty order — show the
         # real menu so off-catalog requests ("pesan 1 mobil") are rejected.

@@ -42,6 +42,7 @@ INTENT_PATTERNS: dict[str, list[str]] = {
         r"\bdaftar (menu|harga|produk)\b",
         r"\b(?:mau|ingin|minta|saya|sy|aku|gue|gw) lihat\b",
         r"\bsaya mau\b",
+        r"\baku mau\b",
         r"\bsy mw\b",
         r"\baku mw\b",
         r"\bgw mw\b",
