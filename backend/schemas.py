@@ -6,7 +6,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # ── Auth ────────────────────────────────────────────────────────────────────────
@@ -107,6 +107,11 @@ class BusinessResponse(BaseModel):
     payment_methods: list = Field(default_factory=list)
     qris_image_url: Optional[str] = None
     business_type: str = "warung"
+
+    @field_validator("payment_methods", mode="before")
+    @classmethod
+    def _none_to_list(cls, v):
+        return v or []
 
     model_config = {"from_attributes": True}
 
