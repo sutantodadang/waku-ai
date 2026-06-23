@@ -499,6 +499,27 @@ def extract_booking_from_chat(chat_messages: list[dict], catalog: Optional[list[
         return {"items": [], "scheduled_at": None, "staff_name": None, "deposit_amount": None, "notes": ""}
 
 
+def _normalize_unit_prices(items: list[dict], total: float) -> list[dict]:
+    """Backend expects UNIT price (it multiplies by qty). Some LLM outputs put the
+    LINE total in `price`. If the line-sum matches `total` but the unit-sum does
+    not, the prices are line totals -> convert each to a unit price."""
+    if not items or not total or total <= 0:
+        return items
+
+    def _q(it):
+        return max(int(it.get("qty") or it.get("quantity") or 1), 1)
+
+    def _p(it):
+        return float(it.get("price") or 0)
+
+    unit_sum = sum(_q(it) * _p(it) for it in items)
+    line_sum = sum(_p(it) for it in items)
+    if round(unit_sum) != round(total) and round(line_sum) == round(total):
+        for it in items:
+            it["price"] = _p(it) / _q(it)
+    return items
+
+
 def extract_order_from_chat(chat_messages: list[dict], catalog: Optional[list[dict]] = None) -> dict:
     """
     Extract structured order data from a list of chat messages.
@@ -515,6 +536,10 @@ def extract_order_from_chat(chat_messages: list[dict], catalog: Optional[list[di
         "Kamu adalah asisten yang mengekstrak data pesanan dari percakapan WhatsApp."
         "Kembalikan JSON dengan format: {\"items\": [{\"name\": \"...\", \"qty\": 1, \"price\": 0.0}], "
         "\"total\": 0.0, \"notes\": \"...\"}.\n"
+        "PENTING: `price` adalah harga SATUAN per unit (BUKAN total per baris). "
+        "`qty` adalah jumlah unit yang dipesan. "
+        "Contoh: '10 nasi goreng @Rp14.000' -> "
+        "{\"name\":\"Nasi Goreng\",\"qty\":10,\"price\":14000}, total 140000.\n"
         "Gunakan Bahasa Indonesia untuk notes. Hanya output JSON, tanpa markdown."
     )
 
@@ -554,6 +579,9 @@ def extract_order_from_chat(chat_messages: list[dict], catalog: Optional[list[di
         # Calculate total if not provided
         if total == 0.0 and items:
             total = sum(item.get("qty", 1) * item.get("price", 0.0) for item in items)
+
+        # Defense-in-depth: normalise line-total prices to unit prices
+        items = _normalize_unit_prices(items, total)
 
         return {
             "items": items,

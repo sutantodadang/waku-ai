@@ -324,13 +324,14 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
                 session, business, customer.phone_number, text, customer=customer
             )
 
+            send_payment_after = False
             if business.business_type in ("salon", "wedding"):
                 if ai_booking and ai_booking.get("status") == "closed":
                     await _persist_ai_booking(session, business, customer, ai_booking)
             elif ai_order and ai_order.get("status") == "closed":
                 await _persist_ai_order(session, business, customer, ai_order)
-                # Auto-send payment after the order is finalised (Task 10 wires this).
-                await _maybe_send_payment(session, business, customer)
+                # Defer payment until AFTER the confirm reply is sent (better UX).
+                send_payment_after = True
             elif (not ai_ok) and _AI_FALLBACK_ORDER_REGEX:
                 # AI unreachable → degraded regex fallback so orders aren't lost.
                 products = (await session.execute(
@@ -365,6 +366,8 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
                 access_token=business.access_token,
             )
             await save_message(session, business.id, customer.id, reply, "outbound")
+            if send_payment_after:
+                await _maybe_send_payment(session, business, customer)
         except Exception as exc:
             logger.exception("Error processing message from %s: %s", from_number, exc)
             try:
