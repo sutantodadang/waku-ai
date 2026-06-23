@@ -5,6 +5,7 @@ import { api, ApiError } from "../lib/api";
 import { authStore, useAuth } from "../lib/auth";
 import { Button, Card, ErrorBox, Field, inputCls, PageTitle, Spinner } from "../components/ui";
 import type { BusinessType, FAQItem, PaymentMethod, Settings as SettingsT } from "../lib/types";
+import { toast } from "../lib/toast";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-3 font-display text-base font-bold text-ink">{children}</h2>;
@@ -18,6 +19,8 @@ export default function Settings() {
   const { data: bizData } = useBusiness();
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [qris, setQris] = useState("");
+  const [qrisPayload, setQrisPayload] = useState("");
+  const [qrisGenerating, setQrisGenerating] = useState(false);
 
   const [form, setForm] = useState<SettingsT | null>(null);
   const [saved, setSaved] = useState(false);
@@ -63,6 +66,33 @@ export default function Settings() {
   const createStaff = useCreateStaff();
   const deleteStaff = useDeleteStaff();
   const [newStaffName, setNewStaffName] = useState("");
+
+  async function handleQrisFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const url = await api.upload(file);
+      setQris(url);
+      toast.success("Gambar QRIS berhasil diupload.");
+    } catch (x) {
+      toast.error(x instanceof ApiError ? x.message : "Gagal mengupload gambar QRIS.");
+    }
+  }
+
+  async function handleGenerateQris() {
+    const p = qrisPayload.trim();
+    if (!p) { toast.error("Masukkan kode QRIS terlebih dahulu."); return; }
+    setQrisGenerating(true);
+    try {
+      const url = await api.generateQris(p);
+      setQris(url);
+      toast.success("QR QRIS berhasil dibuat.");
+    } catch (x) {
+      toast.error(x instanceof ApiError ? x.message : "Gagal membuat QR QRIS.");
+    } finally {
+      setQrisGenerating(false);
+    }
+  }
 
   function addMethod() {
     setMethods((m) => [...m, { type: "rekening", label: "", value: "" }]);
@@ -196,9 +226,56 @@ export default function Settings() {
           </div>
         ))}
         <Button variant="ghost" type="button" onClick={addMethod}>+ Tambah metode</Button>
-        <Field label="URL Gambar QRIS (opsional)">
-          <input className={inputCls} value={qris} onChange={(e) => setQris(e.target.value)} placeholder="https://..." />
-        </Field>
+
+        {/* ── QRIS block ── */}
+        <div className="mt-4 space-y-3 rounded-xl border border-ink/10 p-4">
+          <p className="font-semibold text-ink text-sm">Gambar QRIS (opsional)</p>
+
+          <Field label="URL gambar QRIS">
+            <input
+              className={inputCls}
+              value={qris}
+              onChange={(e) => setQris(e.target.value)}
+              placeholder="https://..."
+            />
+          </Field>
+
+          <Field label="Upload gambar QRIS">
+            <input
+              type="file"
+              accept="image/*"
+              className="text-sm text-ink/70"
+              onChange={handleQrisFile}
+            />
+          </Field>
+
+          <Field label="Generate dari kode QRIS">
+            <textarea
+              className={`${inputCls} min-h-[3rem] py-2 font-mono text-xs`}
+              value={qrisPayload}
+              onChange={(e) => setQrisPayload(e.target.value)}
+              placeholder="00020101021126610014COM.GO-JEK.WWW..."
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={handleGenerateQris}
+              disabled={qrisGenerating}
+              className="mt-1"
+            >
+              {qrisGenerating ? "Membuat..." : "Buat QR"}
+            </Button>
+          </Field>
+
+          {qris && (
+            <img
+              src={qris}
+              alt="Preview QRIS"
+              className="mt-2 h-36 w-36 rounded-lg border border-ink/10 object-contain"
+            />
+          )}
+        </div>
+
         <Button onClick={savePayment} disabled={updateBiz.isPending}>{updateBiz.isPending ? "..." : "Simpan pembayaran"}</Button>
       </Card>
 
