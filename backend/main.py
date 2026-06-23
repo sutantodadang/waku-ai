@@ -90,7 +90,7 @@ from services.order_service import (
 from services.embeddings import embed_product
 from services.retrieval import select_relevant_products
 from services.payment import send_payment_info
-from services.booking_service import check_booking_clash
+from services.booking_service import check_booking_clash, create_booking, resolve_staff
 
 load_dotenv()
 
@@ -320,11 +320,14 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
             customer = await get_or_create_customer(session, business.id, from_number)
             await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
 
-            reply, ai_order, ai_ok = await _generate_ai_reply(
+            reply, ai_order, ai_booking, ai_ok = await _generate_ai_reply(
                 session, business, customer.phone_number, text, customer=customer
             )
 
-            if ai_order and ai_order.get("status") == "closed":
+            if business.business_type in ("salon", "wedding"):
+                if ai_booking and ai_booking.get("status") == "closed":
+                    await _persist_ai_booking(session, business, customer, ai_booking)
+            elif ai_order and ai_order.get("status") == "closed":
                 await _persist_ai_order(session, business, customer, ai_order)
                 # Auto-send payment after the order is finalised (Task 10 wires this).
                 await _maybe_send_payment(session, business, customer)
@@ -393,6 +396,31 @@ def _normalize_ai_items(ai_items: list[dict]) -> list[dict]:
             "price": it.get("price"),
         })
     return [it for it in out if it["name"]]
+
+
+def _parse_iso(value) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+async def _persist_ai_booking(session, business, customer, ai_booking: dict) -> None:
+    items = ai_booking.get("items") or []
+    if not items:
+        return
+    staff_id = await resolve_staff(session, business.id, ai_booking.get("staff_name"))
+    await create_booking(
+        session, business.id, customer.id,
+        items=items,
+        scheduled_at=_parse_iso(ai_booking.get("scheduled_at")),
+        staff_id=staff_id,
+        total=float(ai_booking.get("total") or sum(float(i.get("price") or 0) for i in items)),
+        deposit_amount=ai_booking.get("deposit_amount"),
+        notes=ai_booking.get("notes", ""),
+    )
 
 
 async def _persist_ai_order(session, business, customer, ai_order: dict) -> None:
@@ -468,13 +496,14 @@ async def _generate_ai_reply(
     session_id: str,
     message_text: str,
     customer: Optional[Customer] = None,
-) -> tuple[str, Optional[dict], bool]:
+) -> tuple[str, Optional[dict], Optional[dict], bool]:
     """
     Forward the message to the AI service (/ai/reply), scoped to this business's
     catalog + context. Falls back to a sensible Indonesian reply when the AI
     service is unreachable.
-    Returns (reply_text, ai_order, ai_ok) where:
+    Returns (reply_text, ai_order, ai_booking, ai_ok) where:
       - ai_order is the order dict from the AI response (or None when the AI did not close an order)
+      - ai_booking is the booking dict from the AI response (or None when no booking was closed)
       - ai_ok is True when the AI service responded successfully, False when unreachable/errored
     """
     catalog = await select_relevant_products(session, business.id, message_text, k=12)
@@ -484,6 +513,7 @@ async def _generate_ai_reply(
         "session_id": session_id,
         "business_context": {"store_name": business.business_name, "owner_name": ""},
         "catalog": catalog,
+        "business_type": business.business_type,
     }
 
     if customer is not None:
@@ -499,8 +529,9 @@ async def _generate_ai_reply(
             data = resp.json()
             reply = data.get("reply", "")
             ai_order = data.get("order")
+            ai_booking = data.get("booking")
             if reply:
-                return reply, ai_order, True
+                return reply, ai_order, ai_booking, True
     except httpx.RequestError as exc:
         logger.warning("AI service unreachable (%s) — using fallback reply.", exc)
     except Exception as exc:
@@ -513,6 +544,7 @@ async def _generate_ai_reply(
         "• \"beli 2 nasi goreng, 1 es teh\"\n"
         "• \"saya mau pesan 3 ayam geprek\"\n\n"
         "Ada yang bisa saya bantu?",
+        None,
         None,
         False,
     )
