@@ -2,6 +2,16 @@
 from helpers import register, auth
 
 
+def test_get_fresh_business_no_payment_methods(client):
+    """A never-PATCHed business has NULL payment_methods; GET must coerce to []
+    (not 500)."""
+    t = register(client)
+    h = auth(t["access_token"])
+    r = client.get("/api/business", headers=h)
+    assert r.status_code == 200
+    assert r.json()["payment_methods"] == []
+
+
 def test_patch_and_get_payment_methods(client):
     t = register(client)
     h = auth(t["access_token"])
