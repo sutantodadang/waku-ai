@@ -24,3 +24,13 @@ def test_salon_enters_booking_flow(monkeypatch):
     mgr = conv_mod.ConversationManager(); monkeypatch.setattr(conv_mod, "manager", mgr)
     conv_mod.generate_reply("629", "mau booking", catalog=[{"name": "Facial", "price": 80000}], business_type="salon")
     assert called["booking"] is True
+
+
+def test_wedding_enters_booking_flow(monkeypatch):
+    monkeypatch.setattr(conv_mod, "ask_llm", lambda *a, **k: "halo kak")
+    called = {"booking": False}
+    monkeypatch.setattr(conv_mod, "_handle_booking_flow",
+                        lambda *a, **k: called.__setitem__("booking", True) or "ok")
+    mgr = conv_mod.ConversationManager(); monkeypatch.setattr(conv_mod, "manager", mgr)
+    conv_mod.generate_reply("630", "mau booking", catalog=[{"name": "Paket Gold", "price": 5000000}], business_type="wedding")
+    assert called["booking"] is True
