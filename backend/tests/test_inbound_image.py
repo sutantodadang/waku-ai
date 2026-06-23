@@ -72,7 +72,7 @@ def _get_business():
 
 
 def test_inbound_image_saves_messages_and_replies(client, monkeypatch):
-    """Full path: image msg → download → persist inbound (media_url set) → AI match → outbound saved."""
+    """Captionless image → download → persist inbound (media_url set) → AI match → template reply saved."""
 
     # Register + connect
     t = register(client)
@@ -98,13 +98,14 @@ def test_inbound_image_saves_messages_and_replies(client, monkeypatch):
     monkeypatch.setattr(main, "send_message", fake_send)
     monkeypatch.setattr(main, "_match_image_with_ai", fake_match_image)
 
+    # NO caption — should hit the template/confirm reply path
     img_msg = {
         "from_number": "628999",
         "message_id": "wamid.img99",
         "type": "image",
         "media_id": "MEDIA999",
-        "caption": "ini foto makanan",
-        "text": "ini foto makanan",
+        "caption": "",
+        "text": "",
         "timestamp": "1700000099",
     }
 
@@ -134,7 +135,88 @@ def test_inbound_image_saves_messages_and_replies(client, monkeypatch):
     assert inbound[0].media_url.startswith("/uploads/")
 
     assert len(outbound) == 1, f"expected 1 outbound, got {len(outbound)}"
+    # Template reply should mention the matched product
     assert "Nasi Goreng" in outbound[0].content, f"reply should mention product: {outbound[0].content}"
+
+
+def test_inbound_image_with_caption_routes_to_conversational_pipeline(client, monkeypatch):
+    """Captioned image → download OK → inbound image saved (media_url set) → caption routed through
+    _reply_to_text with save_inbound=False and grounded text containing matched product name."""
+
+    t = register(client, email="cap@x.com", phone="081333333333", business_name="Warung Cap")
+    connect_wa(client, t["access_token"], phone_number_id="PNID_CAP", access_token="TKN_CAP")
+    biz = _get_business()
+
+    async def fake_download(media_id, *, phone_number_id=None, access_token=None):
+        return (b"\x89PNG\r\n\x1a\n", "image/png")
+
+    async def fake_send(*a, **k):
+        return {"messages": [{"id": "wamid.cap_out"}]}
+
+    async def fake_match_image(business, image_bytes, mime, caption, catalog):
+        return {
+            "matched": True,
+            "product_name": "Parfum Mawar",
+            "price": 50000.0,
+            "reply": "Ini Parfum Mawar ya Kak?",
+        }
+
+    # Record calls to _reply_to_text
+    reply_to_text_calls = []
+    _original_reply_to_text = main._reply_to_text
+
+    async def fake_reply_to_text(session, business, customer, text, message_id, *, save_inbound=True):
+        reply_to_text_calls.append({
+            "text": text,
+            "message_id": message_id,
+            "save_inbound": save_inbound,
+        })
+        # Call through so outbound message is saved
+        await _original_reply_to_text(session, business, customer, text, message_id, save_inbound=save_inbound)
+
+    monkeypatch.setattr(main, "download_media", fake_download)
+    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(main, "_match_image_with_ai", fake_match_image)
+    monkeypatch.setattr(main, "_reply_to_text", fake_reply_to_text)
+
+    img_msg = {
+        "from_number": "628777",
+        "message_id": "wamid.cap77",
+        "type": "image",
+        "media_id": "MEDIA777",
+        "caption": "apakah ini ada?",
+        "text": "apakah ini ada?",
+        "timestamp": "1700000077",
+    }
+
+    async def _run():
+        async with database.async_session_factory() as session:
+            await main._process_tenant_messages(session, biz, [img_msg])
+            await session.commit()
+
+    asyncio.run(_run())
+
+    # _reply_to_text must have been called exactly once with save_inbound=False
+    assert len(reply_to_text_calls) == 1, f"expected 1 _reply_to_text call, got {len(reply_to_text_calls)}"
+    call = reply_to_text_calls[0]
+    assert call["save_inbound"] is False, "caption path must pass save_inbound=False (inbound image already saved)"
+    assert "apakah ini ada?" in call["text"], f"caption must appear in grounded text: {call['text']}"
+    assert "Parfum Mawar" in call["text"], f"matched product name must ground the text: {call['text']}"
+
+    # Inbound image row must still be persisted with media_url
+    async def _check():
+        async with database.async_session_factory() as s:
+            msgs = (await s.execute(
+                select(models.Message).where(models.Message.business_id == biz.id)
+                .order_by(models.Message.id)
+            )).scalars().all()
+            return msgs
+
+    rows = asyncio.run(_check())
+    inbound = [m for m in rows if m.direction == "inbound"]
+    assert len(inbound) == 1, f"expected 1 inbound image row, got {len(inbound)}"
+    assert inbound[0].media_url is not None, "inbound image must have media_url even when caption is routed"
+    assert inbound[0].media_url.startswith("/uploads/")
 
 
 def test_inbound_image_graceful_on_download_failure(client, monkeypatch):

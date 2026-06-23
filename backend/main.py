@@ -309,6 +309,69 @@ async def webhook_post(request: Request):
     return {"status": "ok", "messages_processed": len(incoming_messages)}
 
 
+async def _reply_to_text(
+    session: AsyncSession,
+    business: Business,
+    customer: Customer,
+    text: str,
+    message_id: str,
+    *,
+    save_inbound: bool = True,
+) -> None:
+    """Run the conversational reply pipeline for one inbound text (or image caption)."""
+    if save_inbound:
+        await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
+
+    reply, ai_order, ai_booking, ai_ok = await _generate_ai_reply(
+        session, business, customer.phone_number, text, customer=customer
+    )
+
+    send_payment_after = False
+    if business.business_type in ("salon", "wedding"):
+        if ai_booking and ai_booking.get("status") == "closed":
+            await _persist_ai_booking(session, business, customer, ai_booking)
+    elif ai_order and ai_order.get("status") == "closed":
+        await _persist_ai_order(session, business, customer, ai_order)
+        # Defer payment until AFTER the confirm reply is sent (better UX).
+        send_payment_after = True
+    elif (not ai_ok) and _AI_FALLBACK_ORDER_REGEX:
+        # AI unreachable → degraded regex fallback so orders aren't lost.
+        products = (await session.execute(
+            select(Product).where(Product.business_id == business.id)
+        )).scalars().all()
+        known = {p.name: p.price for p in products}
+        regex_items = extract_order_from_message(text, known or None)
+        if regex_items:
+            await create_order(session, business.id, customer.id, regex_items)
+            try:
+                await recompute_customer_stats(session, customer.id)
+            except Exception:
+                logger.exception("recompute failed")
+
+    # On-demand payment: customer asked how to pay → send payment info.
+    if any(kw in text.lower() for kw in (
+        "cara bayar", "gimana bayar", "bayar gimana",
+        "pembayaran", "no rekening", "nomor rekening",
+    )):
+        _order = await find_amendable_order(session, business.id, customer.id)
+        _total = _order.total if _order else 0.0
+        try:
+            await send_payment_info(session, business, customer, _total)
+        except Exception:
+            logger.exception("On-demand payment send failed")
+
+    reply = f"{reply}{AI_REPLY_FOOTER}"
+
+    await send_message(
+        customer.phone_number, reply,
+        phone_number_id=business.phone_number_id,
+        access_token=business.access_token,
+    )
+    await save_message(session, business.id, customer.id, reply, "outbound")
+    if send_payment_after:
+        await _maybe_send_payment(session, business, customer)
+
+
 async def _process_tenant_messages(session: AsyncSession, business: Business, messages: list[dict]) -> None:
     """Persist + AI-reply + send for each customer message of a business."""
     for msg in messages:
@@ -331,56 +394,7 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
             if not text:
                 continue
 
-            await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
-
-            reply, ai_order, ai_booking, ai_ok = await _generate_ai_reply(
-                session, business, customer.phone_number, text, customer=customer
-            )
-
-            send_payment_after = False
-            if business.business_type in ("salon", "wedding"):
-                if ai_booking and ai_booking.get("status") == "closed":
-                    await _persist_ai_booking(session, business, customer, ai_booking)
-            elif ai_order and ai_order.get("status") == "closed":
-                await _persist_ai_order(session, business, customer, ai_order)
-                # Defer payment until AFTER the confirm reply is sent (better UX).
-                send_payment_after = True
-            elif (not ai_ok) and _AI_FALLBACK_ORDER_REGEX:
-                # AI unreachable → degraded regex fallback so orders aren't lost.
-                products = (await session.execute(
-                    select(Product).where(Product.business_id == business.id)
-                )).scalars().all()
-                known = {p.name: p.price for p in products}
-                regex_items = extract_order_from_message(text, known or None)
-                if regex_items:
-                    await create_order(session, business.id, customer.id, regex_items)
-                    try:
-                        await recompute_customer_stats(session, customer.id)
-                    except Exception:
-                        logger.exception("recompute failed")
-
-            # On-demand payment: customer asked how to pay → send payment info.
-            if any(kw in text.lower() for kw in (
-                "cara bayar", "gimana bayar", "bayar gimana",
-                "pembayaran", "no rekening", "nomor rekening",
-            )):
-                _order = await find_amendable_order(session, business.id, customer.id)
-                _total = _order.total if _order else 0.0
-                try:
-                    await send_payment_info(session, business, customer, _total)
-                except Exception:
-                    logger.exception("On-demand payment send failed")
-
-            reply = f"{reply}{AI_REPLY_FOOTER}"
-
-            await send_message(
-                from_number, reply,
-                phone_number_id=business.phone_number_id,
-                access_token=business.access_token,
-            )
-            await save_message(session, business.id, customer.id, reply, "outbound")
-            if send_payment_after:
-                await _maybe_send_payment(session, business, customer)
+            await _reply_to_text(session, business, customer, text, message_id, save_inbound=True)
         except Exception as exc:
             logger.exception("Error processing message from %s: %s", from_number, exc)
             try:
@@ -406,7 +420,11 @@ async def _handle_inbound_image(session: AsyncSession, business: Business, custo
     )
 
     if result is None:
-        await save_message(session, business.id, customer.id, caption or "[gambar]", "inbound", wamid=message_id)
+        caption_stripped = caption.strip() if caption else ""
+        if caption_stripped:
+            await _reply_to_text(session, business, customer, caption_stripped, message_id, save_inbound=True)
+            return
+        await save_message(session, business.id, customer.id, "[gambar]", "inbound", wamid=message_id)
         reply = (
             "Waku terima gambarnya Kak 🙏 "
             "Tapi Waku belum bisa memproses gambar sekarang. "
@@ -440,11 +458,21 @@ async def _handle_inbound_image(session: AsyncSession, business: Business, custo
     catalog = [{"name": p.name, "price": p.price, "image_url": p.image_url} for p in products]
 
     match = await _match_image_with_ai(business, content_bytes, mime, caption, catalog)
-    reply_text = match.get("reply") or "Waku terima gambarnya Kak 🙏"
-    reply = f"{reply_text}{AI_REPLY_FOOTER}"
-
-    await send_message(from_number, reply, phone_number_id=business.phone_number_id, access_token=business.access_token)
-    await save_message(session, business.id, customer.id, reply, "outbound")
+    caption_stripped = caption.strip() if caption else ""
+    matched_name = match.get("product_name") or ""
+    if caption_stripped:
+        # Customer asked something with the photo — answer naturally via the normal
+        # pipeline, grounded by the vision-identified product. Inbound image already saved.
+        grounded = (
+            caption_stripped
+            if not matched_name
+            else f"{caption_stripped}\n(Pelanggan mengirim foto produk yang dikenali: {matched_name})"
+        )
+        await _reply_to_text(session, business, customer, grounded, message_id, save_inbound=False)
+    else:
+        reply = f"{match.get('reply') or 'Waku terima gambarnya Kak 🙏'}{AI_REPLY_FOOTER}"
+        await send_message(from_number, reply, phone_number_id=business.phone_number_id, access_token=business.access_token)
+        await save_message(session, business.id, customer.id, reply, "outbound")
 
 
 async def _match_image_with_ai(
