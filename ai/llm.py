@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from typing import Optional
 
@@ -10,6 +11,8 @@ import httpx
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 # ──────────────────────────────────────────────
 #  System prompt — Indonesian UMKM style
@@ -67,6 +70,29 @@ def get_fallback_response(intent: str) -> str:
 
 
 # ──────────────────────────────────────────────
+#  Content extraction helper
+# ──────────────────────────────────────────────
+
+def _extract_content(data: dict) -> Optional[str]:
+    """Assistant text from an OpenAI-compatible chat response. Falls back to
+    `reasoning_content` (stripped of <think> blocks) for reasoning models
+    (e.g. nemotron-nano) that leave `content` empty."""
+    try:
+        msg = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        return None
+    content = msg.get("content")
+    if content and content.strip():
+        return content.strip()
+    reasoning = msg.get("reasoning_content")
+    if reasoning and reasoning.strip():
+        cleaned = _THINK_RE.sub("", reasoning).strip()
+        if cleaned:
+            return cleaned
+    return None
+
+
+# ──────────────────────────────────────────────
 #  OpenAI-compatible API caller
 # ──────────────────────────────────────────────
 
@@ -97,10 +123,10 @@ def call_openai(messages: list[dict], model: Optional[str] = None, temperature: 
             )
             resp.raise_for_status()
             data = resp.json()
-            content = data["choices"][0]["message"].get("content")
-            if content and content.strip():
+            content = _extract_content(data)
+            if content:
                 return content
-            logger.warning("OpenAI 200 but empty content; raw=%.300s", json.dumps(data)[:300])
+            logger.warning("OpenAI 200 but no usable content; raw=%.300s", json.dumps(data)[:300])
             return None
     except httpx.HTTPStatusError as e:
         logger.error(f"OpenAI API HTTP error: {e.response.status_code} {e.response.text}")

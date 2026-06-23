@@ -103,3 +103,51 @@ def test_ollama_provider_never_calls_openai(monkeypatch):
 
     assert result == "ollama only"
     assert not openai_tracker.called, "call_openai must NOT be called when provider=ollama"
+
+
+# ---------------------------------------------------------------------------
+# _extract_content pure-helper tests (no httpx mocking needed)
+# ---------------------------------------------------------------------------
+
+def _make_response(content=None, reasoning_content=None):
+    """Build a minimal OpenAI-compatible response dict."""
+    msg = {}
+    if content is not None:
+        msg["content"] = content
+    if reasoning_content is not None:
+        msg["reasoning_content"] = reasoning_content
+    return {"choices": [{"message": msg}]}
+
+
+def test_extract_content_returns_content_when_present():
+    data = _make_response(content="  halo kak  ", reasoning_content="ignored")
+    assert llm._extract_content(data) == "halo kak"
+
+
+def test_extract_content_uses_reasoning_when_content_empty():
+    # Real nemotron-nano payload: content="" but reasoning_content has the answer
+    data = _make_response(
+        content="",
+        reasoning_content="Halo! Parfum ada, bisa beli Rp10.000. Ada stoknya.",
+    )
+    result = llm._extract_content(data)
+    assert result == "Halo! Parfum ada, bisa beli Rp10.000. Ada stoknya."
+
+
+def test_extract_content_strips_think_blocks_from_reasoning():
+    data = _make_response(
+        content="",
+        reasoning_content="<think>internal chain of thought</think>answer",
+    )
+    assert llm._extract_content(data) == "answer"
+
+
+def test_extract_content_returns_none_when_both_empty():
+    data = _make_response(content="", reasoning_content="   ")
+    assert llm._extract_content(data) is None
+
+
+def test_extract_content_returns_none_on_malformed_dict():
+    assert llm._extract_content({}) is None
+    assert llm._extract_content({"choices": []}) is None
+    assert llm._extract_content(None) is None
