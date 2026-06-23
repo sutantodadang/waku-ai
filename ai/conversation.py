@@ -123,7 +123,8 @@ manager = ConversationManager()
 def generate_reply(session_id: str, incoming_message: str,
                    business_context: Optional[dict] = None,
                    catalog: Optional[list[dict]] = None,
-                   customer: Optional[dict] = None) -> str:
+                   customer: Optional[dict] = None,
+                   business_type: str = "warung") -> str:
     """
     Generate a reply for an incoming message using NLU + LLM or rule-based logic.
 
@@ -159,8 +160,11 @@ def generate_reply(session_id: str, incoming_message: str,
         conv.add_message("assistant", blocked)
         return blocked
 
-    # ── Handle order-building flow ──
-    response = _handle_order_flow(conv, incoming_message, intent, analysis, business_context)
+    # ── Route by business_type ──
+    if business_type in ("salon", "wedding"):
+        response = _handle_booking_flow(conv, incoming_message, intent, analysis, business_context, business_type)
+    else:
+        response = _handle_order_flow(conv, incoming_message, intent, analysis, business_context)
 
     if response is None:
         # Let LLM handle it
@@ -299,6 +303,11 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
             return "\n".join(lines) + "\n\nAda yang bisa Waku bantu Kak? 😊"
 
     return None  # Fall through to LLM
+
+
+def _handle_booking_flow(conv, message, intent, analysis, business_context, business_type):
+    """Placeholder — Task 9 implements the booking flow. Falls through to the LLM."""
+    return None
 
 
 def _llm_reply(conv: Conversation, intent: str, business_context: Optional[dict],

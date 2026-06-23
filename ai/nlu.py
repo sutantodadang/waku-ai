@@ -53,6 +53,13 @@ INTENT_PATTERNS: dict[str, list[str]] = {
         r"\bsy (?:mau|mo|mw) (?:order|pesan|beli)\b",
         r"\baku (?:mau|mo|mw) (?:order|pesan|beli)\b",
     ],
+    "BOOKING": [
+        r"\bbooking\b", r"\bbuking\b", r"\bbuk in\b",
+        r"\bjanji\b", r"\bjanjian\b", r"\breservasi\b", r"\breserve\b",
+        r"\bjadwal\b", r"\bjadwalin\b",
+        r"\b(?:kapan|jam berapa) (?:bisa|kosong|available)\b",
+        r"\bmau (?:booking|janji|reservasi|jadwal)\b",
+    ],
     "INQUIRY_PRICE": [
         r"\bharga\b",
         r"\bberapa\b",
