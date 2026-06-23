@@ -4,6 +4,7 @@ Indonesian MSMEs order management through WhatsApp.
 """
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
@@ -66,6 +67,7 @@ from schemas import (
 )
 from services.whatsapp import (
     PLATFORM_PHONE_NUMBER_ID,
+    download_media,
     exchange_code_for_token,
     extract_phone_number_id,
     parse_statuses,
@@ -311,14 +313,24 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
     """Persist + AI-reply + send for each customer message of a business."""
     for msg in messages:
         from_number = msg.get("from_number", "")
-        text = msg.get("text", "")
-        message_id = msg.get("message_id", "")
-        if not from_number or not text:
+        if not from_number:
             continue
 
-        logger.info("Processing message from %s for business %d: %.80s", from_number, business.id, text)
+        msg_type = msg.get("type", "text")
+        message_id = msg.get("message_id", "")
+
+        logger.info("Processing %s message from %s for business %d", msg_type, from_number, business.id)
         try:
             customer = await get_or_create_customer(session, business.id, from_number)
+
+            if msg_type == "image" and msg.get("media_id"):
+                await _handle_inbound_image(session, business, customer, msg)
+                continue
+
+            text = msg.get("text", "")
+            if not text:
+                continue
+
             await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
 
             reply, ai_order, ai_booking, ai_ok = await _generate_ai_reply(
@@ -379,6 +391,95 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
                 )
             except Exception:
                 logger.error("Failed to send error reply to %s", from_number)
+
+
+async def _handle_inbound_image(session: AsyncSession, business: Business, customer: Customer, msg: dict) -> None:
+    """Download, persist, match, and reply for an inbound image message."""
+    from_number = customer.phone_number
+    message_id = msg.get("message_id", "")
+    caption = msg.get("caption", "")
+
+    result = await download_media(
+        msg["media_id"],
+        phone_number_id=business.phone_number_id,
+        access_token=business.access_token,
+    )
+
+    if result is None:
+        await save_message(session, business.id, customer.id, caption or "[gambar]", "inbound", wamid=message_id)
+        reply = (
+            "Waku terima gambarnya Kak 🙏 "
+            "Tapi Waku belum bisa memproses gambar sekarang. "
+            "Boleh sebutkan produk yang Kakak maksud?"
+            + AI_REPLY_FOOTER
+        )
+        await send_message(from_number, reply, phone_number_id=business.phone_number_id, access_token=business.access_token)
+        await save_message(session, business.id, customer.id, reply, "outbound")
+        return
+
+    content_bytes, mime = result
+
+    # Derive extension from mime type
+    ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/webp": ".webp"}
+    ext = ext_map.get(mime, ".jpg")
+    safe_name = f"inbound_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}{ext}"
+    dest = os.path.join(UPLOAD_DIR, safe_name)
+    with open(dest, "wb") as f:
+        f.write(content_bytes)
+    media_url = f"/uploads/{safe_name}"
+
+    await save_message(
+        session, business.id, customer.id, caption or "[gambar]", "inbound",
+        wamid=message_id, media_url=media_url,
+    )
+
+    # Load catalog for AI matching
+    products = (await session.execute(
+        select(Product).where(Product.business_id == business.id)
+    )).scalars().all()
+    catalog = [{"name": p.name, "price": p.price, "image_url": p.image_url} for p in products]
+
+    match = await _match_image_with_ai(business, content_bytes, mime, caption, catalog)
+    reply_text = match.get("reply") or "Waku terima gambarnya Kak 🙏"
+    reply = f"{reply_text}{AI_REPLY_FOOTER}"
+
+    await send_message(from_number, reply, phone_number_id=business.phone_number_id, access_token=business.access_token)
+    await save_message(session, business.id, customer.id, reply, "outbound")
+
+
+async def _match_image_with_ai(
+    business: Business,
+    image_bytes: bytes,
+    mime: str,
+    caption: str,
+    catalog: list[dict],
+) -> dict:
+    """POST to AI service /ai/match-image and return the response dict."""
+    payload = {
+        "image_b64": base64.b64encode(image_bytes).decode(),
+        "mime_type": mime,
+        "caption": caption or "",
+        "catalog": catalog,
+        "business_type": business.business_type,
+    }
+    headers = {"X-Waku-Secret": AI_SERVICE_SECRET} if AI_SERVICE_SECRET else {}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{AI_SERVICE_URL}/ai/match-image", json=payload, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as exc:
+        logger.warning("AI match-image failed: %s", exc)
+        return {
+            "matched": False,
+            "product_name": "",
+            "price": 0.0,
+            "reply": (
+                "Waku terima gambarnya Kak 🙏 "
+                "Tapi Waku belum yakin ini produk yang mana. "
+                "Boleh sebutkan nama produknya ya?"
+            ),
+        }
 
 
 def _normalize_phone(phone: str) -> str:

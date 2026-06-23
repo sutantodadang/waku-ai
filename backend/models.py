@@ -109,6 +109,7 @@ class Message(Base):
         DateTime, server_default=func.now(), nullable=False
     )
     wamid: Mapped[Optional[str]] = mapped_column(String(255))  # WhatsApp message ID
+    media_url: Mapped[Optional[str]] = mapped_column(String(512))  # inbound media (image) saved under /uploads
 
     business: Mapped["Business"] = relationship(back_populates="messages")
     customer: Mapped["Customer"] = relationship(back_populates="messages")

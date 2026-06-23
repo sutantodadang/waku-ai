@@ -85,6 +85,8 @@ _PRODUCT_DURATION_COLUMN: dict[str, str] = {
     "duration_minutes": "INTEGER",
 }
 
+_MESSAGE_MEDIA_COLUMN: dict[str, str] = {"media_url": "VARCHAR(512)"}
+
 
 def _run_migrations(sync_conn) -> None:
     """Idempotent schema top-up for existing databases (SQLite)."""
@@ -133,6 +135,13 @@ def _run_migrations(sync_conn) -> None:
         if name not in biz_existing:
             sync_conn.exec_driver_sql(f"ALTER TABLE businesses ADD COLUMN {name} {ddl}")
             logger.info("Migration: added businesses.%s", name)
+    # messages: inbound media URL
+    if "messages" in insp.get_table_names():
+        msg_existing = {c["name"] for c in insp.get_columns("messages")}
+        for name, ddl in _MESSAGE_MEDIA_COLUMN.items():
+            if name not in msg_existing:
+                sync_conn.exec_driver_sql(f"ALTER TABLE messages ADD COLUMN {name} {ddl}")
+                logger.info("Migration: added messages.%s", name)
 
 
 async def init_db() -> None:
