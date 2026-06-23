@@ -1,14 +1,29 @@
 import { Link } from "@tanstack/react-router";
+import { useBusiness } from "../lib/queries";
 
-const items = [
+type NavItem = { to: string; icon: string; label: string };
+
+const WARUNG_ITEMS: NavItem[] = [
   { to: "/", icon: "🏠", label: "Beranda" },
   { to: "/orders", icon: "🧾", label: "Pesanan" },
   { to: "/customers", icon: "👥", label: "Pelanggan" },
   { to: "/catalog", icon: "🏪", label: "Katalog" },
   { to: "/settings", icon: "💬", label: "Auto-Balas" },
-] as const;
+];
+
+const BOOKING_ITEMS: NavItem[] = [
+  { to: "/", icon: "🏠", label: "Beranda" },
+  { to: "/bookings", icon: "📅", label: "Booking" },
+  { to: "/customers", icon: "👥", label: "Pelanggan" },
+  { to: "/catalog", icon: "🏪", label: "Katalog" },
+  { to: "/settings", icon: "💬", label: "Auto-Balas" },
+];
 
 export default function BottomNav() {
+  const { data: biz } = useBusiness();
+  const isBookingBusiness = biz?.business_type === "salon" || biz?.business_type === "wedding";
+  const items = isBookingBusiness ? BOOKING_ITEMS : WARUNG_ITEMS;
+
   return (
     <nav className="pb-safe fixed bottom-0 left-1/2 z-50 w-full max-w-[640px] -translate-x-1/2 border-t border-ink/[0.06] bg-white/90 px-2 pt-1.5 backdrop-blur-md">
       <div className="flex justify-around">

@@ -1,25 +1,28 @@
 import { useState, type ChangeEvent, type FormEvent } from "react";
-import { useProducts, useProductMutations } from "../lib/queries";
+import { useProducts, useProductMutations, useBusiness } from "../lib/queries";
 import { api, ApiError } from "../lib/api";
 import { fmtRp } from "../lib/format";
 import { Button, Card, ErrorBox, Field, inputCls, PageTitle, Spinner } from "../components/ui";
 import type { Product } from "../lib/types";
 
-type ProductInput = { name: string; price: number; description?: string; image_url?: string };
+type ProductInput = { name: string; price: number; description?: string; image_url?: string; duration_minutes?: number | null };
 
 function ProductForm({
   initial,
   onSubmit,
   onCancel,
+  isSalon,
 }: {
   initial?: Product;
   onSubmit: (d: ProductInput) => Promise<void>;
   onCancel: () => void;
+  isSalon?: boolean;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [price, setPrice] = useState(initial?.price ?? 0);
   const [desc, setDesc] = useState(initial?.description ?? "");
   const [imageUrl, setImageUrl] = useState(initial?.image_url ?? "");
+  const [durationMinutes, setDurationMinutes] = useState<number | "">(initial?.duration_minutes ?? "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -40,7 +43,13 @@ function ProductForm({
     }
     setBusy(true);
     try {
-      await onSubmit({ name, price, description: desc, image_url: imageUrl || undefined });
+      await onSubmit({
+        name,
+        price,
+        description: desc,
+        image_url: imageUrl || undefined,
+        duration_minutes: isSalon && durationMinutes !== "" ? Number(durationMinutes) : null,
+      });
     } catch (x) {
       setErr(x instanceof ApiError ? x.message : "Gagal menyimpan.");
     } finally {
@@ -56,6 +65,18 @@ function ProductForm({
       <Field label="Harga (Rp)">
         <input className={inputCls} type="number" inputMode="numeric" value={price} onChange={(e) => setPrice(Number(e.target.value))} />
       </Field>
+      {isSalon && (
+        <Field label="Durasi (menit)">
+          <input
+            className={inputCls}
+            type="number"
+            inputMode="numeric"
+            value={durationMinutes}
+            onChange={(e) => setDurationMinutes(e.target.value === "" ? "" : Number(e.target.value))}
+            placeholder="60"
+          />
+        </Field>
+      )}
       <Field label="Deskripsi">
         <textarea className={`${inputCls} min-h-[4rem] py-2`} value={desc} onChange={(e) => setDesc(e.target.value)} />
       </Field>
@@ -74,6 +95,8 @@ function ProductForm({
 export default function Catalog() {
   const { data, isLoading, error } = useProducts();
   const { create, update, remove } = useProductMutations();
+  const { data: bizData } = useBusiness();
+  const isSalon = bizData?.business_type === "salon";
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
 
@@ -92,6 +115,7 @@ export default function Catalog() {
       {adding && (
         <Card className="mb-4">
           <ProductForm
+            isSalon={isSalon}
             onSubmit={async (d) => {
               await create.mutateAsync(d);
               setAdding(false);
@@ -129,6 +153,7 @@ export default function Catalog() {
                 <div className="mt-3">
                   <ProductForm
                     initial={p}
+                    isSalon={isSalon}
                     onSubmit={async (d) => {
                       await update.mutateAsync({ id: p.id, data: d });
                       setEditing(null);

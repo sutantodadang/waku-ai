@@ -1,6 +1,8 @@
 import { authStore } from "./auth";
 import type {
+  Booking,
   BusinessProfile,
+  BusinessType,
   Customer,
   CustomerDetail,
   DashboardSummary,
@@ -10,6 +12,7 @@ import type {
   PaymentMethod,
   Product,
   Settings,
+  Staff,
   TokenResponse,
   WhatsAppConnection,
 } from "./types";
@@ -79,9 +82,9 @@ export const api = {
 
   // ── Catalog ──
   products: () => req<Product[]>("/api/products"),
-  createProduct: (d: { name: string; price: number; description?: string; image_url?: string }) =>
+  createProduct: (d: { name: string; price: number; description?: string; image_url?: string; duration_minutes?: number | null }) =>
     req<Product>("/api/products", { method: "POST", ...body(d) }),
-  updateProduct: (id: number, d: Partial<{ name: string; price: number; description: string; image_url: string }>) =>
+  updateProduct: (id: number, d: Partial<{ name: string; price: number; description: string; image_url: string; duration_minutes: number | null }>) =>
     req<Product>(`/api/products/${id}`, { method: "PUT", ...body(d) }),
   deleteProduct: (id: number) => req<unknown>(`/api/products/${id}`, { method: "DELETE" }),
 
@@ -91,10 +94,23 @@ export const api = {
   getBusiness: () => req<BusinessProfile>("/api/business"),
   renameBusiness: (business_name: string) =>
     req<{ business_name: string }>("/api/business", { method: "PATCH", ...body({ business_name }) }),
-  updateBusiness: (d: { business_name: string; payment_methods?: PaymentMethod[]; qris_image_url?: string | null }) =>
+  updateBusiness: (d: { business_name: string; business_type?: BusinessType; payment_methods?: PaymentMethod[]; qris_image_url?: string | null }) =>
     req<BusinessProfile>("/api/business", { method: "PATCH", ...body(d) }),
+
+  // ── Staff ──
+  listStaff: () => req<Staff[]>("/api/staff"),
+  createStaff: (name: string) => req<Staff>("/api/staff", { method: "POST", ...body({ name }) }),
+  deleteStaff: (id: number) => req<{ ok: boolean }>(`/api/staff/${id}`, { method: "DELETE" }),
   sendOrderPayment: (id: number) =>
     req<{ sent: boolean }>(`/api/orders/${id}/send-payment`, { method: "POST" }),
+
+  // ── Bookings ──
+  listBookings: (q?: { status?: string; date?: string }) =>
+    req<Booking[]>(`/api/bookings${q?.status || q?.date ? "?" + new URLSearchParams(q as Record<string, string>) : ""}`),
+  updateBooking: (id: number, d: { status?: string; scheduled_at?: string; staff_id?: number }) =>
+    req<Booking>(`/api/bookings/${id}`, { method: "PATCH", ...body(d) }),
+  remindBooking: (id: number) => req<{ sent: boolean }>(`/api/bookings/${id}/remind`, { method: "POST" }),
+  sendBookingPayment: (id: number) => req<{ sent: boolean }>(`/api/bookings/${id}/send-payment`, { method: "POST" }),
 
   // ── WhatsApp ──
   whatsappStatus: () => req<WhatsAppConnection>("/api/whatsapp/status"),

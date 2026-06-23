@@ -77,6 +77,14 @@ _BUSINESS_PAYMENT_COLUMNS: dict[str, str] = {
     "qris_image_url": "VARCHAR(512)",
 }
 
+_BUSINESS_TYPE_COLUMN: dict[str, str] = {
+    "business_type": "VARCHAR(16) DEFAULT 'warung' NOT NULL",
+}
+
+_PRODUCT_DURATION_COLUMN: dict[str, str] = {
+    "duration_minutes": "INTEGER",
+}
+
 
 def _run_migrations(sync_conn) -> None:
     """Idempotent schema top-up for existing databases (SQLite)."""
@@ -109,9 +117,19 @@ def _run_migrations(sync_conn) -> None:
             if name not in prod_existing:
                 sync_conn.exec_driver_sql(f"ALTER TABLE products ADD COLUMN {name} {ddl}")
                 logger.info("Migration: added products.%s", name)
+        # products: Phase C booking duration
+        for name, ddl in _PRODUCT_DURATION_COLUMN.items():
+            if name not in prod_existing:
+                sync_conn.exec_driver_sql(f"ALTER TABLE products ADD COLUMN {name} {ddl}")
+                logger.info("Migration: added products.%s", name)
     # businesses: Phase B payment columns
     biz_existing = {c["name"] for c in insp.get_columns("businesses")}
     for name, ddl in _BUSINESS_PAYMENT_COLUMNS.items():
+        if name not in biz_existing:
+            sync_conn.exec_driver_sql(f"ALTER TABLE businesses ADD COLUMN {name} {ddl}")
+            logger.info("Migration: added businesses.%s", name)
+    # businesses: Phase C business type
+    for name, ddl in _BUSINESS_TYPE_COLUMN.items():
         if name not in biz_existing:
             sync_conn.exec_driver_sql(f"ALTER TABLE businesses ADD COLUMN {name} {ddl}")
             logger.info("Migration: added businesses.%s", name)

@@ -95,6 +95,7 @@ class BusinessProfileUpdate(BaseModel):
     business_name: str = Field(..., min_length=1, max_length=255)
     payment_methods: Optional[list[PaymentMethod]] = Field(default=None, max_length=10)
     qris_image_url: Optional[str] = Field(default=None, max_length=512)
+    business_type: Optional[str] = Field(default=None, pattern="^(warung|salon|wedding)$")
 
 
 class BusinessResponse(BaseModel):
@@ -105,6 +106,7 @@ class BusinessResponse(BaseModel):
     created_at: datetime.datetime
     payment_methods: list = Field(default_factory=list)
     qris_image_url: Optional[str] = None
+    business_type: str = "warung"
 
     model_config = {"from_attributes": True}
 
@@ -169,6 +171,7 @@ class ProductCreate(BaseModel):
     price: float = Field(..., ge=0)
     description: Optional[str] = None
     image_url: Optional[str] = None
+    duration_minutes: Optional[int] = Field(default=None, ge=0)
 
 
 class ProductUpdate(BaseModel):
@@ -177,6 +180,7 @@ class ProductUpdate(BaseModel):
     price: Optional[float] = Field(None, ge=0)
     description: Optional[str] = None
     image_url: Optional[str] = None
+    duration_minutes: Optional[int] = Field(default=None, ge=0)
 
 
 class ProductResponse(BaseModel):
@@ -186,6 +190,7 @@ class ProductResponse(BaseModel):
     price: float
     description: Optional[str] = None
     image_url: Optional[str] = None
+    duration_minutes: Optional[int] = None
     created_at: datetime.datetime
 
     model_config = {"from_attributes": True}
@@ -278,3 +283,38 @@ class UploadResponse(BaseModel):
 class SendPaymentResponse(BaseModel):
     """POST /api/orders/{id}/send-payment response."""
     sent: bool
+
+
+# ── Staff ────────────────────────────────────────────────────────────────────────
+class StaffCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class StaffResponse(BaseModel):
+    id: int
+    name: str
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
+# ── Bookings ─────────────────────────────────────────────────────────────────────
+class BookingResponse(BaseModel):
+    id: int
+    customer_name: str
+    staff_id: Optional[int] = None
+    items: list = Field(default_factory=list)
+    total: float
+    deposit_amount: Optional[float] = None
+    scheduled_at: Optional[datetime.datetime] = None
+    duration_minutes: Optional[int] = None
+    status: str
+    notes: Optional[str] = None
+    clash: bool = False
+    created_at: datetime.datetime
+
+
+class BookingUpdate(BaseModel):
+    status: Optional[str] = Field(default=None, pattern="^(requested|confirmed|rejected|completed|cancelled)$")
+    scheduled_at: Optional[datetime.datetime] = None
+    staff_id: Optional[int] = None

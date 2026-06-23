@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "@tanstack/react-router";
-import { useSettings, useUpdateSettings, useUpdateBusiness, useBusiness } from "../lib/queries";
+import { useSettings, useUpdateSettings, useUpdateBusiness, useBusiness, useStaff, useCreateStaff, useDeleteStaff } from "../lib/queries";
 import { api, ApiError } from "../lib/api";
 import { authStore, useAuth } from "../lib/auth";
 import { Button, Card, ErrorBox, Field, inputCls, PageTitle, Spinner } from "../components/ui";
-import type { FAQItem, PaymentMethod, Settings as SettingsT } from "../lib/types";
+import type { BusinessType, FAQItem, PaymentMethod, Settings as SettingsT } from "../lib/types";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-3 font-display text-base font-bold text-ink">{children}</h2>;
@@ -48,6 +48,21 @@ export default function Settings() {
       setBizMsg(x instanceof ApiError ? x.message : "Gagal.");
     }
   }
+
+  // Tipe bisnis
+  const [bizType, setBizType] = useState<BusinessType>("warung");
+  useEffect(() => {
+    if (bizData?.business_type) setBizType(bizData.business_type);
+  }, [bizData]);
+  function saveBizType() {
+    updateBiz.mutate({ business_name: bizName.trim() || (businessName ?? ""), business_type: bizType });
+  }
+
+  // Staff (salon only)
+  const { data: staffList } = useStaff();
+  const createStaff = useCreateStaff();
+  const deleteStaff = useDeleteStaff();
+  const [newStaffName, setNewStaffName] = useState("");
 
   function addMethod() {
     setMethods((m) => [...m, { type: "rekening", label: "", value: "" }]);
@@ -100,6 +115,64 @@ export default function Settings() {
         </div>
         {bizMsg && <p className="mt-2 text-sm text-brand-deep">{bizMsg}</p>}
       </Card>
+
+      <Card>
+        <SectionTitle>Tipe bisnis</SectionTitle>
+        <Field label="Tipe">
+          <select
+            className={inputCls}
+            value={bizType}
+            onChange={(e) => setBizType(e.target.value as BusinessType)}
+          >
+            <option value="warung">Warung / Toko</option>
+            <option value="salon">Salon / Barbershop</option>
+            <option value="wedding">Wedding / Event</option>
+          </select>
+        </Field>
+        <div className="mt-3">
+          <Button onClick={saveBizType} disabled={updateBiz.isPending}>
+            {updateBiz.isPending ? "..." : "Simpan tipe"}
+          </Button>
+        </div>
+      </Card>
+
+      {bizType === "salon" && (
+        <Card>
+          <SectionTitle>Manajemen Staff</SectionTitle>
+          {staffList && staffList.length === 0 && (
+            <p className="mb-3 text-sm text-ink/50">Belum ada staff. Tambah staff pertama.</p>
+          )}
+          {staffList?.map((s) => (
+            <div key={s.id} className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-ink">{s.name}</span>
+              <button
+                type="button"
+                onClick={() => deleteStaff.mutate(s.id)}
+                className="text-sm font-medium text-red-600"
+              >
+                Hapus
+              </button>
+            </div>
+          ))}
+          <div className="mt-3 flex gap-2">
+            <input
+              className={inputCls}
+              placeholder="Nama staff"
+              value={newStaffName}
+              onChange={(e) => setNewStaffName(e.target.value)}
+            />
+            <Button
+              onClick={() => {
+                if (!newStaffName.trim()) return;
+                createStaff.mutate(newStaffName.trim(), { onSuccess: () => setNewStaffName("") });
+              }}
+              disabled={createStaff.isPending || !newStaffName.trim()}
+            >
+              {createStaff.isPending ? "..." : "+ Tambah"}
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <Card>
         <h2 className="mb-1 font-display text-base font-bold text-ink">Metode Pembayaran</h2>

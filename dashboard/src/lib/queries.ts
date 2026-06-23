@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
-import type { OrderStatus, PaymentMethod, Settings } from "./types";
+import type { BusinessType, OrderStatus, PaymentMethod, Settings } from "./types";
 
 export const keys = {
   summary: ["summary"] as const,
@@ -11,6 +11,8 @@ export const keys = {
   whatsapp: ["whatsapp"] as const,
   customers: ["customers"] as const,
   customer: (id: number) => ["customer", id] as const,
+  staff: ["staff"] as const,
+  bookings: ["bookings"] as const,
 };
 
 export const useSummary = () => useQuery({ queryKey: keys.summary, queryFn: api.summary });
@@ -32,7 +34,7 @@ export function useUpdateOrderStatus() {
   });
 }
 
-type ProductInput = { name: string; price: number; description?: string; image_url?: string };
+type ProductInput = { name: string; price: number; description?: string; image_url?: string; duration_minutes?: number | null };
 
 export function useProductMutations() {
   const qc = useQueryClient();
@@ -89,12 +91,58 @@ export function useEmbeddedSignup() {
 export function useUpdateBusiness() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (d: { business_name: string; payment_methods?: PaymentMethod[]; qris_image_url?: string | null }) =>
+    mutationFn: (d: { business_name: string; business_type?: BusinessType; payment_methods?: PaymentMethod[]; qris_image_url?: string | null }) =>
       api.updateBusiness(d),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.business }),
   });
 }
 
+export const useStaff = () => useQuery({ queryKey: keys.staff, queryFn: api.listStaff });
+
+export function useCreateStaff() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.createStaff(name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.staff }),
+  });
+}
+
+export function useDeleteStaff() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.deleteStaff(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.staff }),
+  });
+}
+
 export function useSendOrderPayment() {
   return useMutation({ mutationFn: (id: number) => api.sendOrderPayment(id) });
+}
+
+export const useBookings = (q?: { status?: string; date?: string }) =>
+  useQuery({ queryKey: keys.bookings, queryFn: () => api.listBookings(q) });
+
+export function useUpdateBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, d }: { id: number; d: { status?: string; scheduled_at?: string; staff_id?: number } }) =>
+      api.updateBooking(id, d),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.bookings }),
+  });
+}
+
+export function useRemindBooking() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.remindBooking(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.bookings }),
+  });
+}
+
+export function useSendBookingPayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.sendBookingPayment(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.bookings }),
+  });
 }

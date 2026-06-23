@@ -59,6 +59,8 @@ class Business(Base):
     # ── Phase B: payment delivery ──
     payment_methods: Mapped[list] = mapped_column(JSON, default=list)
     qris_image_url: Mapped[Optional[str]] = mapped_column(String(512))
+    # ── Phase C: business type ──
+    business_type: Mapped[str] = mapped_column(String(16), default="warung", nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -141,8 +143,36 @@ class Product(Base):
     # ── Phase B: hybrid retrieval cache ──
     embedding: Mapped[Optional[list]] = mapped_column(JSON)
     embedding_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    # ── Phase C: booking duration ──
+    duration_minutes: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
 
     business: Mapped["Business"] = relationship(back_populates="products")
+
+
+class Staff(Base):
+    __tablename__ = "staff"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    business_id: Mapped[int] = mapped_column(Integer, ForeignKey("businesses.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class Booking(Base):
+    __tablename__ = "bookings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    business_id: Mapped[int] = mapped_column(Integer, ForeignKey("businesses.id"), nullable=False)
+    customer_id: Mapped[int] = mapped_column(Integer, ForeignKey("customers.id"), nullable=False)
+    staff_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("staff.id"))
+    items: Mapped[list] = mapped_column(JSON, default=list)
+    total: Mapped[float] = mapped_column(Float, default=0.0)
+    deposit_amount: Mapped[Optional[float]] = mapped_column(Float)
+    scheduled_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime)
+    duration_minutes: Mapped[Optional[int]] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="requested", nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

@@ -60,6 +60,7 @@ class Conversation:
     order: OrderState = field(default_factory=OrderState)
     catalog: list[dict] = field(default_factory=list)
     closed_order: Optional[dict] = None
+    closed_booking: Optional[dict] = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -123,7 +124,8 @@ manager = ConversationManager()
 def generate_reply(session_id: str, incoming_message: str,
                    business_context: Optional[dict] = None,
                    catalog: Optional[list[dict]] = None,
-                   customer: Optional[dict] = None) -> str:
+                   customer: Optional[dict] = None,
+                   business_type: str = "warung") -> str:
     """
     Generate a reply for an incoming message using NLU + LLM or rule-based logic.
 
@@ -138,6 +140,7 @@ def generate_reply(session_id: str, incoming_message: str,
     """
     conv = manager.get_or_create(session_id)
     conv.closed_order = None
+    conv.closed_booking = None
 
     if catalog:
         conv.set_catalog(catalog)
@@ -159,8 +162,11 @@ def generate_reply(session_id: str, incoming_message: str,
         conv.add_message("assistant", blocked)
         return blocked
 
-    # ── Handle order-building flow ──
-    response = _handle_order_flow(conv, incoming_message, intent, analysis, business_context)
+    # ── Route by business_type ──
+    if business_type in ("salon", "wedding"):
+        response = _handle_booking_flow(conv, incoming_message, intent, analysis, business_context, business_type)
+    else:
+        response = _handle_order_flow(conv, incoming_message, intent, analysis, business_context)
 
     if response is None:
         # Let LLM handle it
@@ -301,6 +307,45 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
     return None  # Fall through to LLM
 
 
+_BOOKING_CLOSE_SIGNALS = ["itu aja", "itu saja", "cukup", "fix", "oke", "ok", "iya itu", "ya itu", "deal", "gas"]
+
+
+def _handle_booking_flow(conv, message, intent, analysis, business_context, business_type):
+    """Salon/wedding booking flow. Shows services, and on close extracts the booking.
+    Returns a reply string, or None to fall through to the LLM."""
+    text_lower = analysis["normalized_text"]
+
+    # Menu / service inquiry → show the (already-retrieved) catalog.
+    if intent in ("BOOKING", "ORDER", "INQUIRY_PRICE") and conv.catalog and "?" in message:
+        lines = ["Layanan yang tersedia Kak 😊:"]
+        for item in conv.catalog[:15]:
+            dur = f" · {item['duration_minutes']} menit" if item.get("duration_minutes") else ""
+            lines.append(f"  • {item['name']} — Rp{item.get('price', 0):,.0f}{dur}")
+        lines.append("\nMau booking yang mana, dan untuk tanggal/jam berapa Kak?")
+        return "\n".join(lines)
+
+    # Closing signal → extract the booking.
+    if any(sig in text_lower for sig in _BOOKING_CLOSE_SIGNALS):
+        import sys as _sys
+        extracted = _sys.modules[__name__].extract_booking_from_chat(conv.get_context(), conv.catalog, business_type)
+        items = extracted.get("items") or []
+        if items and extracted.get("scheduled_at"):
+            total = sum(float(it.get("price") or 0) for it in items)
+            conv.closed_booking = {
+                "items": items, "scheduled_at": extracted["scheduled_at"],
+                "staff_name": extracted.get("staff_name"),
+                "deposit_amount": extracted.get("deposit_amount"),
+                "notes": extracted.get("notes", ""), "total": total, "status": "closed",
+            }
+            return ("Siap Kak! Permintaan booking dicatat ya, menunggu konfirmasi pemilik. "
+                    "Nanti Waku kabari 🙏")
+        if items and not extracted.get("scheduled_at"):
+            # Ambiguity guardrail: have a service, missing a clear date/time.
+            return "Boleh Kak 😊 Untuk tanggal dan jam berapa ya?"
+
+    return None  # fall through to the LLM
+
+
 def _llm_reply(conv: Conversation, intent: str, business_context: Optional[dict],
                customer: Optional[dict] = None) -> str:
     """Generate reply using LLM with context."""
@@ -408,6 +453,50 @@ def _extract_order_rule_based(chat_messages: list[dict], catalog: Optional[list[
     notes = f"Diekstrak dari {len(chat_messages)} pesan" if items else "Tidak ditemukan pesanan dalam percakapan."
 
     return {"items": items, "total": total, "notes": notes}
+
+
+def extract_booking_from_chat(chat_messages: list[dict], catalog: Optional[list[dict]], business_type: str) -> dict:
+    """Extract a structured booking from the conversation. scheduled_at is an ISO
+    8601 string, or null when the customer hasn't given a clear date/time."""
+    catalog_text = ""
+    if catalog:
+        catalog_text = "\n".join(
+            f"- {i['name']}: Rp{i['price']:,.0f}" + (f" ({i.get('duration_minutes')} menit)" if i.get('duration_minutes') else "")
+            for i in catalog[:30]
+        )
+    system_prompt = (
+        "Kamu mengekstrak data booking jasa dari percakapan WhatsApp. "
+        "Kembalikan HANYA JSON: {\"items\":[{\"name\":\"...\",\"price\":0,\"duration_minutes\":null}],"
+        "\"scheduled_at\":\"YYYY-MM-DDTHH:MM:SS\"|null,\"staff_name\":\"...\"|null,"
+        "\"deposit_amount\":null,\"notes\":\"...\"}. "
+        "scheduled_at HARUS null jika pelanggan belum menyebut tanggal/jam yang jelas — "
+        "JANGAN mengarang tanggal. Hanya pakai layanan dari KATALOG.\n\nKATALOG:\n" + catalog_text
+    )
+    chat_text = "\n".join(
+        f"{'Pelanggan' if m['role'] == 'user' else 'Waku'}: {m['content']}" for m in chat_messages[-30:]
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Ekstrak booking dari percakapan ini:\n{chat_text}"},
+    ]
+    response = ask_llm(messages, intent="BOOKING", temperature=0.1, max_tokens=512)
+    try:
+        cleaned = response.strip()
+        if "```json" in cleaned:
+            cleaned = cleaned.split("```json")[1].split("```")[0]
+        elif "```" in cleaned:
+            cleaned = cleaned.split("```")[1].split("```")[0]
+        data = json.loads(cleaned)
+        return {
+            "items": data.get("items", []),
+            "scheduled_at": data.get("scheduled_at"),
+            "staff_name": data.get("staff_name"),
+            "deposit_amount": data.get("deposit_amount"),
+            "notes": data.get("notes", ""),
+        }
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        logger.warning(f"Failed to parse booking extraction: {e}")
+        return {"items": [], "scheduled_at": None, "staff_name": None, "deposit_amount": None, "notes": ""}
 
 
 def extract_order_from_chat(chat_messages: list[dict], catalog: Optional[list[dict]] = None) -> dict:

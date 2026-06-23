@@ -28,8 +28,10 @@ from auth import (
     verify_password,
 )
 from database import async_session_factory, close_db, get_db, init_db
-from models import Business, Customer, Message, OTPVerification, Order, Product, User
+from models import Booking, Business, Customer, Message, OTPVerification, Order, Product, Staff, User
 from schemas import (
+    BookingResponse,
+    BookingUpdate,
     BusinessProfileUpdate,
     BusinessRegister,
     BusinessResponse,
@@ -53,6 +55,8 @@ from schemas import (
     SettingsUpdate,
     TokenResponse,
     SendPaymentResponse,
+    StaffCreate,
+    StaffResponse,
     UploadResponse,
     UserLogin,
     UserRegister,
@@ -86,6 +90,7 @@ from services.order_service import (
 from services.embeddings import embed_product
 from services.retrieval import select_relevant_products
 from services.payment import send_payment_info
+from services.booking_service import check_booking_clash, create_booking, resolve_staff
 
 load_dotenv()
 
@@ -156,6 +161,18 @@ STATUS_WA_MESSAGE = {
     "confirmed": "Pesanan kakak lagi disiapkan ya 🙏",
     "completed": "Pesanan kakak sudah selesai! Terima kasih 😊",
     "cancelled": "Mohon maaf, pesanan kakak dibatalkan.",
+}
+
+
+def _fmt_when(dt) -> str:
+    return dt.strftime("%d/%m %H:%M") if dt else "(waktu menyusul)"
+
+
+BOOKING_STATUS_WA_MESSAGE = {
+    "confirmed": "Booking kakak {when} sudah dikonfirmasi ✅.",
+    "rejected": "Mohon maaf, jadwal yang diminta belum bisa. Boleh pilih waktu lain Kak?",
+    "completed": "Terima kasih sudah datang ke {store}! Sampai jumpa lagi 😊",
+    "cancelled": "Mohon maaf, booking kakak dibatalkan.",
 }
 
 DEFAULT_SETTINGS: dict = {
@@ -303,11 +320,14 @@ async def _process_tenant_messages(session: AsyncSession, business: Business, me
             customer = await get_or_create_customer(session, business.id, from_number)
             await save_message(session, business.id, customer.id, text, "inbound", wamid=message_id)
 
-            reply, ai_order, ai_ok = await _generate_ai_reply(
+            reply, ai_order, ai_booking, ai_ok = await _generate_ai_reply(
                 session, business, customer.phone_number, text, customer=customer
             )
 
-            if ai_order and ai_order.get("status") == "closed":
+            if business.business_type in ("salon", "wedding"):
+                if ai_booking and ai_booking.get("status") == "closed":
+                    await _persist_ai_booking(session, business, customer, ai_booking)
+            elif ai_order and ai_order.get("status") == "closed":
                 await _persist_ai_order(session, business, customer, ai_order)
                 # Auto-send payment after the order is finalised (Task 10 wires this).
                 await _maybe_send_payment(session, business, customer)
@@ -376,6 +396,31 @@ def _normalize_ai_items(ai_items: list[dict]) -> list[dict]:
             "price": it.get("price"),
         })
     return [it for it in out if it["name"]]
+
+
+def _parse_iso(value) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+async def _persist_ai_booking(session, business, customer, ai_booking: dict) -> None:
+    items = ai_booking.get("items") or []
+    if not items:
+        return
+    staff_id = await resolve_staff(session, business.id, ai_booking.get("staff_name"))
+    await create_booking(
+        session, business.id, customer.id,
+        items=items,
+        scheduled_at=_parse_iso(ai_booking.get("scheduled_at")),
+        staff_id=staff_id,
+        total=float(ai_booking.get("total") or sum(float(i.get("price") or 0) for i in items)),
+        deposit_amount=ai_booking.get("deposit_amount"),
+        notes=ai_booking.get("notes", ""),
+    )
 
 
 async def _persist_ai_order(session, business, customer, ai_order: dict) -> None:
@@ -451,13 +496,14 @@ async def _generate_ai_reply(
     session_id: str,
     message_text: str,
     customer: Optional[Customer] = None,
-) -> tuple[str, Optional[dict], bool]:
+) -> tuple[str, Optional[dict], Optional[dict], bool]:
     """
     Forward the message to the AI service (/ai/reply), scoped to this business's
     catalog + context. Falls back to a sensible Indonesian reply when the AI
     service is unreachable.
-    Returns (reply_text, ai_order, ai_ok) where:
+    Returns (reply_text, ai_order, ai_booking, ai_ok) where:
       - ai_order is the order dict from the AI response (or None when the AI did not close an order)
+      - ai_booking is the booking dict from the AI response (or None when no booking was closed)
       - ai_ok is True when the AI service responded successfully, False when unreachable/errored
     """
     catalog = await select_relevant_products(session, business.id, message_text, k=12)
@@ -467,6 +513,7 @@ async def _generate_ai_reply(
         "session_id": session_id,
         "business_context": {"store_name": business.business_name, "owner_name": ""},
         "catalog": catalog,
+        "business_type": business.business_type,
     }
 
     if customer is not None:
@@ -482,8 +529,9 @@ async def _generate_ai_reply(
             data = resp.json()
             reply = data.get("reply", "")
             ai_order = data.get("order")
+            ai_booking = data.get("booking")
             if reply:
-                return reply, ai_order, True
+                return reply, ai_order, ai_booking, True
     except httpx.RequestError as exc:
         logger.warning("AI service unreachable (%s) — using fallback reply.", exc)
     except Exception as exc:
@@ -496,6 +544,7 @@ async def _generate_ai_reply(
         "• \"beli 2 nasi goreng, 1 es teh\"\n"
         "• \"saya mau pesan 3 ayam geprek\"\n\n"
         "Ada yang bisa saya bantu?",
+        None,
         None,
         False,
     )
@@ -763,6 +812,8 @@ async def update_business_profile(
         business.payment_methods = [m.model_dump() for m in body.payment_methods]
     if body.qris_image_url is not None:
         business.qris_image_url = body.qris_image_url or None
+    if body.business_type is not None:
+        business.business_type = body.business_type
     await session.flush()
     return business
 
@@ -801,6 +852,49 @@ async def business_summary(
     target_date = date.fromisoformat(day) if day else date.today()
     summary = await get_daily_summary(session, business_id, day=target_date)
     return summary
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  STAFF API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/staff", response_model=list[StaffResponse])
+async def list_staff(
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    rows = (await session.execute(
+        select(Staff).where(Staff.business_id == business.id, Staff.active == True)  # noqa: E712
+    )).scalars().all()
+    return list(rows)
+
+
+@app.post("/api/staff", response_model=StaffResponse)
+async def create_staff(
+    body: StaffCreate,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    staff = Staff(business_id=business.id, name=body.name, active=True)
+    session.add(staff)
+    await session.flush()
+    return staff
+
+
+@app.delete("/api/staff/{staff_id}")
+async def delete_staff(
+    staff_id: int,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    staff = (await session.execute(
+        select(Staff).where(Staff.id == staff_id, Staff.business_id == business.id)
+    )).scalar_one_or_none()
+    if staff is None:
+        raise HTTPException(status_code=404, detail="Staff not found for this business.")
+    staff.active = False  # soft-delete keeps historical bookings' staff_id valid
+    await session.flush()
+    return {"ok": True}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1079,6 +1173,7 @@ async def dashboard_create_product(
         price=body.price,
         description=body.description,
         image_url=body.image_url,
+        duration_minutes=body.duration_minutes,
     )
     session.add(product)
     await session.flush()
@@ -1186,3 +1281,142 @@ async def dashboard_upload_image(file: UploadFile = File(...)):
 async def health():
     """Simple health-check endpoint."""
     return {"status": "healthy", "service": "waku-backend"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  BOOKINGS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def _maybe_notify_booking_status(session, business, booking, customer, new_status) -> None:
+    """Notify customer of booking status change (24h-gated); on confirmed, also send payment."""
+    if not new_status:
+        return
+    template = BOOKING_STATUS_WA_MESSAGE.get(new_status)
+    if template and await within_service_window(session, customer.id):
+        msg = template.format(when=_fmt_when(booking.scheduled_at), store=business.business_name)
+        try:
+            await send_message(
+                customer.phone_number, msg,
+                phone_number_id=business.phone_number_id,
+                access_token=business.access_token,
+            )
+        except Exception:
+            logger.exception("Booking status notify failed for booking %d", booking.id)
+    if new_status == "confirmed":
+        amount = booking.deposit_amount if booking.deposit_amount else booking.total
+        try:
+            await send_payment_info(session, business, customer, amount)
+        except Exception:
+            logger.exception("Booking payment send failed for booking %d", booking.id)
+
+
+async def _booking_to_dict(session: AsyncSession, b: Booking, customer_name: str) -> dict:
+    clash = bool(await check_booking_clash(session, b.business_id, b.staff_id, b.scheduled_at, b.duration_minutes)) \
+        if b.status in ("requested", "confirmed") else False
+    return {
+        "id": b.id, "customer_name": customer_name, "staff_id": b.staff_id,
+        "items": b.items or [], "total": b.total, "deposit_amount": b.deposit_amount,
+        "scheduled_at": b.scheduled_at, "duration_minutes": b.duration_minutes,
+        "status": b.status, "notes": b.notes, "clash": clash, "created_at": b.created_at,
+    }
+
+
+@app.get("/api/bookings", response_model=list[BookingResponse])
+async def list_bookings(
+    status: Optional[str] = Query(None),
+    date: Optional[str] = Query(None),
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    stmt = (
+        select(Booking, Customer)
+        .join(Customer, Booking.customer_id == Customer.id)
+        .where(Booking.business_id == business.id)
+        .order_by(Booking.scheduled_at.asc().nullslast(), Booking.created_at.desc())
+    )
+    if status:
+        stmt = stmt.where(Booking.status == status)
+    if date:  # YYYY-MM-DD
+        import datetime as _dt
+        day = _dt.date.fromisoformat(date)
+        start = _dt.datetime.combine(day, _dt.time.min)
+        end = _dt.datetime.combine(day, _dt.time.max)
+        stmt = stmt.where(Booking.scheduled_at >= start, Booking.scheduled_at <= end)
+    rows = (await session.execute(stmt)).all()
+    return [await _booking_to_dict(session, b, c.name or c.phone_number) for b, c in rows]
+
+
+@app.patch("/api/bookings/{booking_id}", response_model=BookingResponse)
+async def update_booking(
+    booking_id: int,
+    body: BookingUpdate,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    row = (await session.execute(
+        select(Booking, Customer).join(Customer, Booking.customer_id == Customer.id)
+        .where(Booking.id == booking_id, Booking.business_id == business.id)
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Booking not found for this business.")
+    booking, customer = row
+    if body.scheduled_at is not None:
+        booking.scheduled_at = body.scheduled_at
+    if body.staff_id is not None:
+        staff = (await session.execute(
+            select(Staff).where(Staff.id == body.staff_id, Staff.business_id == business.id)
+        )).scalar_one_or_none()
+        if staff is None:
+            raise HTTPException(status_code=400, detail="Invalid staff_id for this business.")
+        booking.staff_id = body.staff_id
+    if body.status is not None:
+        booking.status = body.status
+    await session.flush()
+    # Task 6 wires the status→WA notify + payment here.
+    await _maybe_notify_booking_status(session, business, booking, customer, body.status)
+    return await _booking_to_dict(session, booking, customer.name or customer.phone_number)
+
+
+async def _load_booking(session, business, booking_id):
+    row = (await session.execute(
+        select(Booking, Customer).join(Customer, Booking.customer_id == Customer.id)
+        .where(Booking.id == booking_id, Booking.business_id == business.id)
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Booking not found for this business.")
+    return row
+
+
+@app.post("/api/bookings/{booking_id}/remind", response_model=SendPaymentResponse)
+async def remind_booking(
+    booking_id: int,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    booking, customer = await _load_booking(session, business, booking_id)
+    if not await within_service_window(session, customer.id):
+        return SendPaymentResponse(sent=False)
+    msg = f"Halo Kak, pengingat booking {_fmt_when(booking.scheduled_at)} ya 🙏"
+    try:
+        await send_message(customer.phone_number, msg,
+                           phone_number_id=business.phone_number_id, access_token=business.access_token)
+        return SendPaymentResponse(sent=True)
+    except Exception:
+        logger.exception("Reminder send failed for booking %d", booking.id)
+        return SendPaymentResponse(sent=False)
+
+
+@app.post("/api/bookings/{booking_id}/send-payment", response_model=SendPaymentResponse)
+async def send_booking_payment(
+    booking_id: int,
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    booking, customer = await _load_booking(session, business, booking_id)
+    amount = booking.deposit_amount if booking.deposit_amount else booking.total
+    try:
+        sent = await send_payment_info(session, business, customer, amount)
+    except Exception:
+        logger.exception("Payment send failed for booking %d", booking.id)
+        sent = False
+    return SendPaymentResponse(sent=sent)

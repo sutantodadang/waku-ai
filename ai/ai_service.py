@@ -62,6 +62,7 @@ class ReplyRequest(BaseModel):
     catalog: Optional[list[dict]] = Field(default=None, description="Product catalog [{name, price, stock}]")
     session_id: str = Field(default="default", description="Conversation/session identifier")
     customer: Optional[dict] = Field(default=None, description="Personalisation card {name, usual_items, ...}")
+    business_type: Optional[str] = Field(default="warung", description="warung | salon | wedding")
 
 
 class ReplyResponse(BaseModel):
@@ -70,6 +71,7 @@ class ReplyResponse(BaseModel):
     session_id: str = Field(default="default")
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
     order: Optional[dict] = Field(default=None, description="Finalised order on close; null otherwise")
+    booking: Optional[dict] = Field(default=None, description="Finalised booking on close; null otherwise")
 
 
 class ExtractOrderRequest(BaseModel):
@@ -135,6 +137,7 @@ async def ai_reply(request: ReplyRequest):
             business_context=request.business_context,
             catalog=request.catalog,
             customer=request.customer,
+            business_type=request.business_type,
         )
 
         # Get the intent from the last analysis (stored in conv)
@@ -146,11 +149,13 @@ async def ai_reply(request: ReplyRequest):
 
         conv = conversation_manager.get(request.session_id)
         closed = conv.closed_order if conv else None
+        booking = conv.closed_booking if conv else None
         return ReplyResponse(
             reply=reply,
             intent=analysis["intent"],
             session_id=request.session_id,
             order=closed,
+            booking=booking,
         )
     except Exception as e:
         logger.exception(f"Error in /ai/reply: {e}")

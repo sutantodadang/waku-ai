@@ -9,9 +9,9 @@ def _open_window_order(client, monkeypatch):
         return {"ok": True}
     monkeypatch.setattr(main, "send_message", fake_send)
 
-    # 3-tuple: (reply_text, ai_order_dict, ai_ok)
+    # 4-tuple: (reply_text, ai_order_dict, ai_booking_dict, ai_ok)
     async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
-        return ("ok", {"items": [{"name": "Nasi Goreng", "qty": 1, "price": 14000}], "total": 14000, "status": "closed"}, True)
+        return ("ok", {"items": [{"name": "Nasi Goreng", "qty": 1, "price": 14000}], "total": 14000, "status": "closed"}, None, True)
     monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
 
     t = register(client)

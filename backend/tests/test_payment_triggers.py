@@ -1,7 +1,7 @@
 """Three entry points send payment via send_payment_info (mocked).
 
-NOTE: _generate_ai_reply returns a 3-tuple (reply, ai_order, ai_ok).
-All fake_reply stubs here return the corrected 3-tuple form.
+NOTE: _generate_ai_reply returns a 4-tuple (reply, ai_order, ai_booking, ai_ok).
+All fake_reply stubs here return the corrected 4-tuple form.
 """
 import main
 from helpers import register, connect_wa, customer_message, auth
@@ -28,7 +28,7 @@ def test_auto_send_payment_after_order_closed(client, monkeypatch):
     monkeypatch.setattr(main, "send_message", fake_send)
 
     async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
-        return ("ok", {"items": [{"name": "Nasi Goreng", "qty": 1, "price": 14000}], "total": 14000, "status": "closed"}, True)
+        return ("ok", {"items": [{"name": "Nasi Goreng", "qty": 1, "price": 14000}], "total": 14000, "status": "closed"}, None, True)
     monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
 
     t = register(client)
@@ -54,7 +54,7 @@ def test_dashboard_send_payment_endpoint(client, monkeypatch):
     monkeypatch.setattr(main, "send_message", fake_send)
 
     async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
-        return ("ok", {"items": [{"name": "Nasi Goreng", "qty": 1, "price": 14000}], "total": 14000, "status": "closed"}, True)
+        return ("ok", {"items": [{"name": "Nasi Goreng", "qty": 1, "price": 14000}], "total": 14000, "status": "closed"}, None, True)
     monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
 
     t = register(client)
@@ -84,7 +84,7 @@ def test_payment_intent_triggers_send(client, monkeypatch):
     monkeypatch.setattr(main, "send_message", fake_send)
 
     async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
-        return ("info bayar ya kak", None, True)
+        return ("info bayar ya kak", None, None, True)
     monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
 
     t = register(client)
