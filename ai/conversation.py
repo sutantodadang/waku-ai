@@ -264,19 +264,25 @@ def _handle_order_flow(conv: Conversation, message: str, intent: str,
     if conv.order.active:
         product_names = analysis["entities"]["product_names"]
 
+        # Check for correction signals — re-extract canonical order from full history
+        CORRECTION_SIGNALS = ("harusnya", "seharusnya", "bukan", "ralat", "koreksi",
+                              "ganti", "jadiin", "jadikan", "maksudnya")
+        if analysis["entities"].get("raw_numbers") and any(s in text_lower for s in CORRECTION_SIGNALS):
+            _rebuild_order_from_extraction(conv)
+            return (f"Oke Kak, Waku perbaiki ya:\n{conv.order.summary()}\n"
+                    "Sudah betul Kak? Ada lagi yang mau ditambah? 🙏")
+
         # Check for closing signals
         closing_signals = ["itu saja", "itu aja", "cukup", "selesai", "sudah",
                           "begitu saja", "gitu aja", "itu doang", "itu dongs",
                           "sudah dulu", "ya itu", "iya itu"]
         if any(signal in text_lower for signal in closing_signals):
             conv.order.active = False
-            import sys as _sys
-            extracted = _sys.modules[__name__].extract_order_from_chat(conv.get_context(), conv.catalog)
-            items = extracted.get("items") or []
-            if items:
+            _rebuild_order_from_extraction(conv)
+            if conv.order.items:
                 conv.closed_order = {
-                    "items": items,
-                    "total": extracted.get("total", 0.0),
+                    "items": [{"name": it["name"], "qty": it["qty"], "price": it["price"]} for it in conv.order.items],
+                    "total": conv.order.total(),
                     "status": "closed",
                 }
             return (f"Siap Kak! Pesanannya:\n{conv.order.summary()}\n"
@@ -477,6 +483,31 @@ def _extract_order_rule_based(chat_messages: list[dict], catalog: Optional[list[
     notes = f"Diekstrak dari {len(chat_messages)} pesan" if items else "Tidak ditemukan pesanan dalam percakapan."
 
     return {"items": items, "total": total, "notes": notes}
+
+
+def _rebuild_order_from_extraction(conv) -> list[dict]:
+    """Re-extract the canonical order from full chat history via the LLM and
+    overwrite conv.order.items (one source of truth). Fills missing prices from
+    the catalog. If extraction yields nothing usable, leaves the order untouched.
+    Returns the resulting conv.order.items."""
+    extracted = extract_order_from_chat(conv.get_context(), conv.catalog)
+    items = extracted.get("items") or []
+    rebuilt = []
+    for it in items:
+        name = it.get("name", "")
+        if not name:
+            continue
+        qty = int(it.get("qty") or it.get("quantity") or 1)
+        price = float(it.get("price") or 0)
+        if price == 0:
+            for c in conv.catalog:
+                if c.get("name", "").lower() == name.lower():
+                    price = float(c.get("price", 0))
+                    break
+        rebuilt.append({"name": name, "qty": qty, "price": price})
+    if rebuilt:
+        conv.order.items = rebuilt
+    return conv.order.items
 
 
 def extract_booking_from_chat(chat_messages: list[dict], catalog: Optional[list[dict]], business_type: str) -> dict:
