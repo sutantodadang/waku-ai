@@ -23,7 +23,7 @@ def _seed(client, token, with_inbound):
                                         staff_id=None, total=80000, deposit_amount=None, notes="")
             await s.commit()
             return b.id
-    return asyncio.get_event_loop().run_until_complete(_run())
+    return asyncio.run(_run())
 
 
 def test_remind_sends_within_window(client, monkeypatch):

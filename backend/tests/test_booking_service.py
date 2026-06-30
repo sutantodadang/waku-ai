@@ -44,7 +44,7 @@ def test_create_and_clash_same_staff(client):
             free = await bk.check_booking_clash(s, biz.id, staff.id, base + datetime.timedelta(hours=2), 60)
             return len(clash), len(free)
 
-    n_clash, n_free = asyncio.get_event_loop().run_until_complete(_run())
+    n_clash, n_free = asyncio.run(_run())
     assert n_clash == 1 and n_free == 0
 
 
@@ -66,7 +66,7 @@ def test_any_staff_not_full_no_clash(client):
             result = await bk.check_booking_clash(s, biz.id, None, base + datetime.timedelta(minutes=30), 60)
             return len(result)
 
-    n = asyncio.get_event_loop().run_until_complete(_run())
+    n = asyncio.run(_run())
     assert n == 0
 
 
@@ -87,7 +87,7 @@ def test_any_staff_full_clash(client):
             result = await bk.check_booking_clash(s, biz.id, None, base + datetime.timedelta(minutes=30), 60)
             return len(result)
 
-    n = asyncio.get_event_loop().run_until_complete(_run())
+    n = asyncio.run(_run())
     assert n >= 1
 
 
@@ -104,5 +104,5 @@ def test_resolve_staff(client):
             none = await bk.resolve_staff(s, biz.id, None)
             return hit, miss, none, staff.id
 
-    hit, miss, none, sid = asyncio.get_event_loop().run_until_complete(_run())
+    hit, miss, none, sid = asyncio.run(_run())
     assert hit == sid and miss is None and none is None

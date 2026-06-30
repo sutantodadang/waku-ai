@@ -23,21 +23,29 @@ def cosine(a: list[float], b: list[float]) -> float:
 
 
 def _embed_openai(texts: list[str]) -> Optional[list[list[float]]]:
-    if not settings.openai_api_key:
+    if not settings.embed_api_key:
         return None
-    url = f"{settings.openai_base_url.rstrip('/')}/embeddings"
+    url = f"{settings.embed_base_url.rstrip('/')}/embeddings"
+    if settings.embed_input_format == "openrouter":
+        payload_input = [{"content": [{"type": "text", "text": t}]} for t in texts]
+    else:
+        payload_input = texts
     try:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(
                 url,
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                json={"model": settings.embed_model, "input": texts},
+                headers={
+                    "Authorization": f"Bearer {settings.embed_api_key}",
+                    "Content-Type": "application/json",
+                    **settings.openrouter_headers,
+                },
+                json={"model": settings.embed_model, "input": payload_input},
             )
             resp.raise_for_status()
             data = resp.json()
             return [row["embedding"] for row in data["data"]]
     except (httpx.HTTPError, KeyError, ValueError) as exc:
-        logger.error("OpenAI embeddings failed: %s", exc)
+        logger.error("Embeddings (OpenAI-compatible) failed: %s", exc)
         return None
 
 
