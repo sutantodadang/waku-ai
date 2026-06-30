@@ -5,6 +5,7 @@ Indonesian MSMEs order management through WhatsApp.
 from __future__ import annotations
 
 import base64
+from io import BytesIO
 import logging
 import os
 import re
@@ -17,6 +18,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -94,6 +96,7 @@ from services.embeddings import embed_product
 from services.retrieval import select_relevant_products
 from services.payment import send_payment_info
 from services.booking_service import check_booking_clash, create_booking, resolve_staff
+from services.report_service import build_sales_report_xlsx
 
 load_dotenv()
 
@@ -190,6 +193,7 @@ DEFAULT_SETTINGS: dict = {
 def _order_to_dashboard_dict(order: Order, customer_name: str) -> dict:
     return {
         "id": order.id,
+        "order_seq": order.order_seq,
         "customer_name": customer_name,
         "status": DB_TO_DASHBOARD_STATUS.get(order.status, order.status),
         "total": order.total,
@@ -1131,6 +1135,46 @@ async def dashboard_summary(
     )
 
 
+@app.get("/api/reports/sales")
+async def sales_report(
+    month: Optional[str] = Query(None, description="Bulan YYYY-MM. Default bulan berjalan."),
+    session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
+):
+    """GET /api/reports/sales?month=YYYY-MM — download .xlsx laporan penjualan bulanan."""
+    today = date.today()
+    if month:
+        try:
+            y, m = month.split("-")
+            start = date(int(y), int(m), 1)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="Format bulan harus YYYY-MM.")
+    else:
+        start = today.replace(day=1)
+    end = date(start.year + 1, 1, 1) if start.month == 12 else date(start.year, start.month + 1, 1)
+    day_start = datetime.combine(start, datetime.min.time())
+    day_end = datetime.combine(end, datetime.min.time())
+
+    stmt = (
+        select(Order, Customer)
+        .join(Customer, Order.customer_id == Customer.id)
+        .where(
+            Order.business_id == business.id,
+            Order.created_at >= day_start,
+            Order.created_at < day_end,
+        )
+        .order_by(Order.created_at.asc())
+    )
+    rows = (await session.execute(stmt)).all()
+    xlsx = build_sales_report_xlsx(rows, business.business_name, f"{start:%Y-%m}", DB_TO_DASHBOARD_STATUS)
+    filename = f"laporan-penjualan-{start:%Y-%m}.xlsx"
+    return StreamingResponse(
+        BytesIO(xlsx),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/api/orders", response_model=list[OrderDashboardResponse])
 async def dashboard_list_orders(
     status: Optional[str] = Query(None, description="Filter: baru|diproses|selesai|dibatalkan"),
@@ -1153,7 +1197,7 @@ async def dashboard_list_orders(
 
 @app.patch("/api/orders/{order_id}", response_model=OrderDashboardResponse)
 async def dashboard_update_order_status(
-    order_id: int,
+    order_id: str,
     body: OrderStatusUpdate,
     session: AsyncSession = Depends(get_db),
     business: Business = Depends(get_current_business),
@@ -1191,14 +1235,14 @@ async def dashboard_update_order_status(
                 phone_number_id=business.phone_number_id, access_token=business.access_token,
             )
         except Exception:
-            logger.exception("Status notification failed for order %d", order.id)
+            logger.exception("Status notification failed for order %s", order.id)
 
     return _order_to_dashboard_dict(order, customer.name or customer.phone_number)
 
 
 @app.post("/api/orders/{order_id}/send-payment", response_model=SendPaymentResponse)
 async def send_order_payment(
-    order_id: int,
+    order_id: str,
     session: AsyncSession = Depends(get_db),
     business: Business = Depends(get_current_business),
 ):

@@ -125,7 +125,8 @@ class OrderItem(BaseModel):
 
 
 class OrderResponse(BaseModel):
-    id: int
+    id: str
+    order_seq: int = 0
     business_id: int
     customer_id: int
     items: list[Any]
@@ -237,7 +238,8 @@ class OrderStatusUpdate(BaseModel):
 
 class OrderDashboardResponse(BaseModel):
     """Order shape expected by the Streamlit dashboard."""
-    id: int
+    id: str
+    order_seq: int = 0
     customer_name: str
     status: str  # Indonesian label
     total: float

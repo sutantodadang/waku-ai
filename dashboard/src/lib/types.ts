@@ -43,7 +43,8 @@ export interface OrderItem {
 }
 
 export interface Order {
-  id: number;
+  id: string;
+  order_seq: number;
   customer_name: string;
   status: OrderStatus;
   total: number;
