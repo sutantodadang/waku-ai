@@ -5,7 +5,6 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -13,7 +12,6 @@ from app.core.security import get_current_business
 from app.models import Business
 from app.schemas import (
     BusinessProfileUpdate,
-    BusinessRegister,
     BusinessResponse,
     DailySummary,
     OrderResponse,
@@ -23,29 +21,6 @@ from app.services.order_service import get_daily_summary, get_orders_for_busines
 logger = logging.getLogger("waku.backend")
 
 router = APIRouter()
-
-
-@router.post("/api/business/register", response_model=BusinessResponse)
-async def register_business(body: BusinessRegister, session: AsyncSession = Depends(get_db)):
-    """
-    Register a new business (UMKM) in the system.
-    """
-    # Check existing
-    stmt = select(Business).where(Business.phone_number == body.phone_number)
-    result = await session.execute(stmt)
-    existing = result.scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=409, detail="Business with this phone number already registered.")
-
-    business = Business(
-        phone_number=body.phone_number,
-        business_name=body.business_name,
-        settings=body.settings or {},
-    )
-    session.add(business)
-    await session.flush()
-    logger.info("Business #%d '%s' registered.", business.id, business.business_name)
-    return business
 
 
 @router.get("/api/business", response_model=BusinessResponse)
@@ -80,13 +55,11 @@ async def list_orders(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
 ):
-    """List orders for a business, newest first."""
-    # Verify business exists
-    stmt = select(Business).where(Business.id == business_id)
-    result = await session.execute(stmt)
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Business not found.")
+    """List orders for a business, newest first. Scoped to the authenticated owner."""
+    if business.id != business_id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
 
     orders = await get_orders_for_business(session, business_id, limit=limit, offset=offset)
     return orders
@@ -97,13 +70,11 @@ async def business_summary(
     business_id: int,
     day: Optional[str] = Query(None, description="Date in YYYY-MM-DD format. Defaults to today."),
     session: AsyncSession = Depends(get_db),
+    business: Business = Depends(get_current_business),
 ):
-    """Daily summary of conversations, orders, and revenue."""
-    # Verify business
-    stmt = select(Business).where(Business.id == business_id)
-    result = await session.execute(stmt)
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Business not found.")
+    """Daily summary of conversations, orders, and revenue. Scoped to the authenticated owner."""
+    if business.id != business_id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
 
     target_date = date.fromisoformat(day) if day else date.today()
     summary = await get_daily_summary(session, business_id, day=target_date)

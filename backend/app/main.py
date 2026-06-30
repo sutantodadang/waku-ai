@@ -45,10 +45,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS: set CORS_ORIGINS (comma-separated) in prod to lock down origins. The API
+# authenticates via Bearer tokens (not cookies), so the permissive default uses a
+# wildcard with credentials disabled — a wildcard + credentials is rejected by browsers.
+_cors_env = os.getenv("CORS_ORIGINS", "").strip()
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

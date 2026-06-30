@@ -111,9 +111,14 @@ def verify_signature(payload_body: bytes, x_hub_signature_256: Optional[str]) ->
     Verify that the incoming webhook payload was signed by Meta.
     Uses APP_SECRET to compute HMAC‑SHA256 and compare.
     """
-    if not APP_SECRET or not x_hub_signature_256:
-        logger.debug("Signature verification skipped (APP_SECRET or header missing).")
-        return True  # skip verification when not configured
+    if not APP_SECRET:
+        # Dev only: no secret configured, cannot verify. Configure APP_SECRET in prod.
+        logger.debug("Signature verification skipped (APP_SECRET not configured).")
+        return True
+    if not x_hub_signature_256:
+        # Secret IS configured but the request carries no signature — fail closed.
+        logger.error("Webhook missing X-Hub-Signature-256 header — rejected.")
+        return False
 
     expected = "sha256=" + hmac.new(
         APP_SECRET.encode(), payload_body, hashlib.sha256

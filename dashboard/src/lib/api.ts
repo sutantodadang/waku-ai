@@ -152,9 +152,13 @@ export const api = {
 
   // ── QRIS generate (JSON) ──
   async generateQris(payload: string): Promise<string> {
+    const t = authStore.getToken();
     const res = await fetch(BASE + "/api/qris/generate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(t ? { Authorization: `Bearer ${t}` } : {}),
+      },
       body: JSON.stringify({ payload }),
     });
     if (!res.ok) throw new ApiError(res.status, "Gagal membuat QR dari payload QRIS.");

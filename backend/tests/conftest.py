@@ -13,6 +13,9 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{DB_FILE}"
 os.environ.setdefault("JWT_SECRET", "test-secret-at-least-32-bytes-long-abcdef")
 os.environ.setdefault("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
 os.environ["PLATFORM_PHONE_NUMBER_ID"] = "PLATFORM_TEST"
+# No APP_SECRET in tests → webhook signature verification runs in dev skip-mode
+# (the suite posts unsigned webhooks). Fail-closed behavior applies only in prod.
+os.environ["APP_SECRET"] = ""
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
