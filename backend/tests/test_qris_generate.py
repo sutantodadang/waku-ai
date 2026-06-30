@@ -10,7 +10,7 @@ SAMPLE_PAYLOAD = (
 
 def test_generate_qris_returns_png_url(client, tmp_path, monkeypatch):
     """Valid payload → 200 with /uploads/qris_*.png URL; file is valid PNG."""
-    import main
+    from app import main
     upload_dir = str(tmp_path)
     monkeypatch.setattr(main, "UPLOAD_DIR", upload_dir)
 

@@ -2,8 +2,8 @@
 import asyncio
 import datetime
 
-import services.payment as pay
-import services.whatsapp as wa
+from app.services import payment as pay
+from app.services import whatsapp as wa
 
 
 class _Biz:

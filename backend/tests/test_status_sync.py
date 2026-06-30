@@ -1,6 +1,6 @@
 """Status change within the window notifies the customer; unmapped status sends nothing."""
-import main
-import services.whatsapp as wa
+from app import main
+from app.services import whatsapp as wa
 from helpers import register, connect_wa, customer_message, auth
 
 

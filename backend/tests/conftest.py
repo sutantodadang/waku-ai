@@ -17,7 +17,7 @@ os.environ["PLATFORM_PHONE_NUMBER_ID"] = "PLATFORM_TEST"
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-import main  # noqa: E402
+from app import main  # noqa: E402
 
 
 @pytest.fixture()

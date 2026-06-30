@@ -1,5 +1,5 @@
 """Salon close-booking is persisted requested; warung path unaffected."""
-import main
+from app import main
 from helpers import register, connect_wa, customer_message, auth
 
 def _ai(reply, *, order=None, booking=None, ok=True):

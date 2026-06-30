@@ -4,8 +4,8 @@ import sqlite3
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import models  # noqa: F401  (populates Base.metadata)
-from database import Base, _run_migrations
+from app import models  # noqa: F401  (populates Base.metadata)
+from app.core.database import Base, _run_migrations
 
 
 async def test_migration_upgrades_old_db_in_place(tmp_path):

@@ -1,6 +1,6 @@
 """Webhook routing: per-business send creds, unknown-tenant drop, order extraction."""
-import main
-from services.whatsapp import parse_statuses
+from app import main
+from app.services.whatsapp import parse_statuses
 from helpers import register, connect_wa, customer_message, request_otp, deliver_otp_via_wa, auth
 
 

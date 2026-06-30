@@ -1,7 +1,7 @@
 """The customer card must never fabricate for unknown customers."""
 import datetime as dt
 import types
-import main
+from app import main
 
 
 def _c(**kw):

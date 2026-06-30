@@ -1,5 +1,5 @@
 """LLM close-order is persisted once; a later close amends it, not duplicates."""
-import main
+from app import main
 from helpers import register, connect_wa, customer_message, auth
 
 

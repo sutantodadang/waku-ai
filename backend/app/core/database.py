@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import logging
 
-from ids import uuid7
+from app.core.ids import uuid7
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv

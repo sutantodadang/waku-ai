@@ -2,8 +2,9 @@
 import asyncio
 import datetime
 
-import services.booking_service as bk
-import database, models
+from app.services import booking_service as bk
+from app.core import database
+from app import models
 from sqlalchemy import select
 from helpers import register, auth
 

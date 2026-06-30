@@ -6,7 +6,7 @@ customer received QRIS first, then the order confirmation — jarring UX.
 Fix: set `send_payment_after = True`, defer the `_maybe_send_payment` call
 until AFTER `send_message(reply)` + `save_message(...)`.
 """
-import main
+from app import main
 from helpers import register, connect_wa, customer_message, auth
 
 

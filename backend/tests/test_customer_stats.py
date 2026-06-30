@@ -6,10 +6,10 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
-import models  # noqa: F401  (populates Base.metadata)
-from database import Base, _run_migrations
-from models import Business, Customer, Order
-from services.order_service import recompute_customer_stats, is_regular, REGULAR_THRESHOLD
+from app import models  # noqa: F401  (populates Base.metadata)
+from app.core.database import Base, _run_migrations
+from app.models import Business, Customer, Order
+from app.services.order_service import recompute_customer_stats, is_regular, REGULAR_THRESHOLD
 
 
 @pytest.fixture

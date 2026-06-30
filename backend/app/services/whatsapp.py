@@ -360,7 +360,7 @@ import datetime as _dt
 async def within_service_window(session, customer_id: int, hours: int = 24) -> bool:
     """True when the customer messaged inbound within the last `hours` (WA free-form window)."""
     from sqlalchemy import select
-    from models import Message
+    from app.models import Message
     stmt = (
         select(Message.timestamp)
         .where(Message.customer_id == customer_id, Message.direction == "inbound")

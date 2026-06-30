@@ -1,5 +1,5 @@
 """The /ai/reply payload carries the retrieved subset, not the whole catalog."""
-import main
+from app import main
 from helpers import register, connect_wa, customer_message, auth
 
 

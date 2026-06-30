@@ -1,5 +1,5 @@
 """Reverse-OTP hardening: code-bound, expiry-checked, single-use, sender-bound."""
-import main
+from app import main
 from helpers import register, request_otp, deliver_otp_via_wa, auth
 
 

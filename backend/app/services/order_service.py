@@ -12,7 +12,7 @@ from typing import Any, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Customer, Message, Order, Product
+from app.models import Customer, Message, Order, Product
 
 logger = logging.getLogger(__name__)
 

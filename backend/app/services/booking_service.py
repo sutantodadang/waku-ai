@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Booking, Staff
+from app.models import Booking, Staff
 
 logger = logging.getLogger(__name__)
 

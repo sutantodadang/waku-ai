@@ -3,7 +3,7 @@
 NOTE: _generate_ai_reply returns a 4-tuple (reply, ai_order, ai_booking, ai_ok).
 All fake_reply stubs here return the corrected 4-tuple form.
 """
-import main
+from app import main
 from helpers import register, connect_wa, customer_message, auth
 
 

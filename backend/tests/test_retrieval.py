@@ -1,8 +1,8 @@
 """Hybrid retrieval: keyword subset, embedding fallback, small-catalog passthrough."""
 import asyncio
 
-import services.retrieval as retr
-import services.embeddings as emb
+from app.services import retrieval as retr
+from app.services import embeddings as emb
 from helpers import register, auth
 
 
@@ -15,7 +15,8 @@ def test_keyword_picks_relevant_subset(client, monkeypatch):
     monkeypatch.setattr(emb, "embed_texts", lambda texts: [[0.0]] * len(texts))
     t = register(client)
     _make_products(client, t["access_token"], [(f"Produk {i}", 1000 + i) for i in range(50)] + [("Nasi Goreng", 14000)])
-    import database, models
+    from app.core import database
+    from app import models
     from sqlalchemy import select
 
     async def _run():
@@ -34,7 +35,8 @@ def test_small_catalog_returns_all_no_embed(client, monkeypatch):
     monkeypatch.setattr(emb, "embed_texts", boom)
     t = register(client)
     _make_products(client, t["access_token"], [("Nasi Goreng", 14000), ("Es Teh", 4000)])
-    import database, models
+    from app.core import database
+    from app import models
     from sqlalchemy import select
 
     async def _run():

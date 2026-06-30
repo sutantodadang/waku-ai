@@ -5,7 +5,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_phase_c_schema(client):
-    import database
+    from app.core import database
 
     async with database.engine.begin() as conn:
         s = await conn.run_sync(lambda conn_sync: {

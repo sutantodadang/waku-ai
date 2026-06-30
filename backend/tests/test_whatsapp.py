@@ -3,8 +3,8 @@ import asyncio
 
 from sqlalchemy import select, text
 
-from database import async_session_factory
-from models import Business
+from app.core.database import async_session_factory
+from app.models import Business
 from helpers import register, auth, connect_wa
 
 

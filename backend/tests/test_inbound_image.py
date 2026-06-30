@@ -7,10 +7,10 @@ import tempfile
 import pytest
 from sqlalchemy import select
 
-import database
-import main
-import models
-import services.whatsapp as wa
+from app.core import database
+from app import main
+from app import models
+from app.services import whatsapp as wa
 from helpers import register, connect_wa
 
 

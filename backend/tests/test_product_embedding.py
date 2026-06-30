@@ -1,6 +1,6 @@
 """Products get an embedding on create; unchanged edits don't recompute; AI down is non-blocking."""
-import main
-import services.embeddings as emb
+from app import main
+from app.services import embeddings as emb
 from helpers import register, auth
 
 

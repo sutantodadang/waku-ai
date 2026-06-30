@@ -24,15 +24,16 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import (
+from app.core.security import (
     create_access_token,
     get_current_business,
     hash_password,
     verify_password,
 )
-from database import async_session_factory, close_db, get_db, init_db
-from models import Booking, Business, Customer, Message, OTPVerification, Order, Product, Staff, User
-from schemas import (
+from app.core.database import async_session_factory, close_db, get_db, init_db
+from app.models import Booking, Business, Customer, Message, OTPVerification, Order, Product, Staff, User
+from app import models  # noqa: F401
+from app.schemas import (
     BookingResponse,
     BookingUpdate,
     BusinessProfileUpdate,
@@ -67,7 +68,7 @@ from schemas import (
     WhatsAppConnectionResponse,
     WhatsAppWebhookPayload,
 )
-from services.whatsapp import (
+from app.services.whatsapp import (
     PLATFORM_PHONE_NUMBER_ID,
     download_media,
     exchange_code_for_token,
@@ -80,7 +81,7 @@ from services.whatsapp import (
     verify_webhook as verify_webhook_token,
     within_service_window,
 )
-from services.order_service import (
+from app.services.order_service import (
     create_order,
     extract_order_from_message,
     find_amendable_order,
@@ -92,11 +93,11 @@ from services.order_service import (
     save_message,
     update_order_items,
 )
-from services.embeddings import embed_product
-from services.retrieval import select_relevant_products
-from services.payment import send_payment_info
-from services.booking_service import check_booking_clash, create_booking, resolve_staff
-from services.report_service import build_sales_report_xlsx
+from app.services.embeddings import embed_product
+from app.services.retrieval import select_relevant_products
+from app.services.payment import send_payment_info
+from app.services.booking_service import check_booking_clash, create_booking, resolve_staff
+from app.services.report_service import build_sales_report_xlsx
 
 load_dotenv()
 
@@ -151,7 +152,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+# uploads/ lives at the backend root (one level up from app/), so existing
+# stored media URLs and .gitignore keep working after the move into app/.
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 

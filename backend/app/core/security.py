@@ -17,8 +17,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
-from models import Business, User
+from app.core.database import get_db
+from app.models import Business, User
 
 logger = logging.getLogger(__name__)
 
