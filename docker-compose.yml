@@ -45,7 +45,7 @@ services:
         # Public URL of the backend, baked into the SPA at build time.
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
     ports:
-      - "8501:8501"
+      - "3000:3000"
     depends_on:
       - backend
 
