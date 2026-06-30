@@ -9,12 +9,11 @@ ARG VITE_API_URL=http://localhost:8000
 ENV VITE_API_URL=$VITE_API_URL
 RUN bun run build
 
-FROM oven/bun:1-slim AS runtime
-WORKDIR /app
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package.json /app/vite.config.ts ./
+# Serve the built SPA with nginx (production static server, not vite preview).
+FROM nginx:alpine AS runtime
+COPY --from=build /app/dist /usr/share/nginx/html
+# nginx's entrypoint renders this template, substituting ${PORT} only.
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV PORT=3000
 EXPOSE 3000
-# vite preview serves dist/ with SPA fallback (client-side routing).
-# Bind 0.0.0.0 and honor the platform-provided $PORT (default 3000).
-CMD ["sh", "-c", "bunx vite preview --host 0.0.0.0 --port ${PORT:-3000}"]
+# Default nginx CMD (the base image entrypoint runs envsubst then starts nginx).

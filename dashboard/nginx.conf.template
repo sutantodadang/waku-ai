@@ -1,0 +1,22 @@
+# Rendered by nginx's docker-entrypoint (envsubst) at startup — only ${PORT} is
+# substituted (it's the sole env in the substitution allowlist), so nginx's own
+# $uri variables are left intact.
+server {
+    listen       ${PORT};
+    server_name  _;
+
+    root   /usr/share/nginx/html;
+    index  index.html;
+
+    # SPA fallback: client-side routing (TanStack Router) needs all unknown
+    # paths to return index.html.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Hashed build assets are immutable — cache hard.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
