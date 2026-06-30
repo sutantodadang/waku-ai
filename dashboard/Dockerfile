@@ -14,6 +14,6 @@ WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json /app/vite.config.ts ./
-EXPOSE 8501
+EXPOSE 3000
 # vite preview serves dist/ with SPA fallback (client-side routing).
 CMD ["bun", "run", "preview"]
