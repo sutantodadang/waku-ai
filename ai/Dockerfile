@@ -17,6 +17,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 EXPOSE 8001
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python3 -c "import http.client; conn=http.client.HTTPConnection('localhost:8001'); conn.request('GET','/health'); resp=conn.getresponse(); exit(0) if resp.status==200 else exit(1)"
+    CMD python3 -c "import os,http.client; p=os.getenv('PORT','8001'); conn=http.client.HTTPConnection('localhost:'+p); conn.request('GET','/health'); resp=conn.getresponse(); exit(0 if resp.status==200 else 1)"
 
-CMD ["uv", "run", "uvicorn", "ai_service:app", "--host", "0.0.0.0", "--port", "8001"]
+# Exec the venv directly — `uv run` would re-sync (incl. dev deps) at startup,
+# which needs network + a writable FS and fails on locked-down deploy runtimes.
+# Honor the platform-provided $PORT, defaulting to 8001.
+CMD ["sh", "-c", "/app/.venv/bin/uvicorn ai_service:app --host 0.0.0.0 --port ${PORT:-8001}"]

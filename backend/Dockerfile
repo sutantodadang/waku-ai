@@ -24,4 +24,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Exec the venv directly — `uv run` would re-sync (incl. dev deps) at startup,
+# which needs network + a writable FS and fails on locked-down deploy runtimes.
+# Honor the platform-provided $PORT, defaulting to 8000.
+CMD ["sh", "-c", "/app/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
