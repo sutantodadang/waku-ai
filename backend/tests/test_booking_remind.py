@@ -2,9 +2,10 @@
 import asyncio
 import datetime
 
-import main
-import database, models
-import services.booking_service as bk
+from app.core import database
+from app import models
+from app.services import booking_service as bk
+from app.api.routers import bookings
 from sqlalchemy import select
 from helpers import register, connect_wa, auth
 
@@ -28,7 +29,7 @@ def _seed(client, token, with_inbound):
 def test_remind_sends_within_window(client, monkeypatch):
     async def cap_send(*a, **k):
         return {"ok": True}
-    monkeypatch.setattr(main, "send_message", cap_send)
+    monkeypatch.setattr(bookings, "send_message", cap_send)
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
     bid = _seed(client, t["access_token"], with_inbound=True)
@@ -39,7 +40,7 @@ def test_remind_sends_within_window(client, monkeypatch):
 def test_remind_skips_outside_window(client, monkeypatch):
     async def cap_send(*a, **k):
         return {"ok": True}
-    monkeypatch.setattr(main, "send_message", cap_send)
+    monkeypatch.setattr(bookings, "send_message", cap_send)
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
     bid = _seed(client, t["access_token"], with_inbound=False)  # no inbound → window closed
@@ -50,7 +51,7 @@ def test_remind_skips_outside_window(client, monkeypatch):
 def test_remind_send_failure_returns_false(client, monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("network down")
-    monkeypatch.setattr(main, "send_message", boom)
+    monkeypatch.setattr(bookings, "send_message", boom)
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
     bid = _seed(client, t["access_token"], with_inbound=True)  # window open
@@ -63,7 +64,7 @@ def test_send_payment_delegates(client, monkeypatch):
     async def cap_pay(session, business, customer, amount):
         captured["amount"] = amount
         return True
-    monkeypatch.setattr(main, "send_payment_info", cap_pay)
+    monkeypatch.setattr(bookings, "send_payment_info", cap_pay)
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
     bid = _seed(client, t["access_token"], with_inbound=True)
@@ -75,7 +76,7 @@ def test_send_payment_delegates(client, monkeypatch):
 def test_send_payment_exception_returns_false(client, monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("send blew up")
-    monkeypatch.setattr(main, "send_payment_info", boom)
+    monkeypatch.setattr(bookings, "send_payment_info", boom)
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
     bid = _seed(client, t["access_token"], with_inbound=True)

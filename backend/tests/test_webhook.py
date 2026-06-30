@@ -1,6 +1,6 @@
 """Webhook routing: per-business send creds, unknown-tenant drop, order extraction."""
-import main
-from services.whatsapp import parse_statuses
+from app.api.routers import webhook
+from app.services.whatsapp import parse_statuses
 from helpers import register, connect_wa, customer_message, request_otp, deliver_otp_via_wa, auth
 
 
@@ -13,8 +13,8 @@ def test_platform_number_doubling_as_tenant_routes_nonotp_to_ai(client, monkeypa
         sent.append(to)
         return {"ok": True}
 
-    monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "AI_SERVICE_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr(webhook, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "AI_SERVICE_URL", "http://127.0.0.1:9")
 
     t = register(client, phone="081111111111")
     connect_wa(client, t["access_token"], phone_number_id="PLATFORM_TEST", access_token="TKN_P")
@@ -34,7 +34,7 @@ def test_platform_number_otp_not_sent_to_ai(client, monkeypatch):
         sent.append(to)
         return {"ok": True}
 
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     t = register(client, phone="081111111111")
     connect_wa(client, t["access_token"], phone_number_id="PLATFORM_TEST", access_token="TKN_P")
@@ -84,8 +84,8 @@ def test_tenant_message_uses_per_business_credentials(client, monkeypatch):
         sent.append((to, body, phone_number_id, access_token))
         return {"ok": True}
 
-    monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "AI_SERVICE_URL", "http://127.0.0.1:9")  # force fast AI fallback
+    monkeypatch.setattr(webhook, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "AI_SERVICE_URL", "http://127.0.0.1:9")  # force fast AI fallback
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
@@ -104,12 +104,12 @@ def test_order_auto_extracted_from_message(client, monkeypatch):
     async def fake_send(*a, **k):
         return {"ok": True}
 
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     async def fake_reply(session, business, sid, text, customer=None):
         order = {"items": [{"name": "nasi goreng", "qty": 2, "price": None}, {"name": "es teh", "qty": 1, "price": None}], "total": 0, "status": "closed"}
         return ("ok", order, None, True)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
@@ -124,7 +124,7 @@ def test_offcatalog_item_creates_no_order(client, monkeypatch):
     async def fake_send(*a, **k):
         return {"ok": True}
 
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     replies = iter([
         ("ok", None, None, True),  # off-catalog message → AI does not close an order
@@ -133,9 +133,9 @@ def test_offcatalog_item_creates_no_order(client, monkeypatch):
 
     async def fake_reply(session, business, sid, text, customer=None):
         return next(replies)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
     # Disable regex fallback so off-catalog text cannot sneak through.
-    monkeypatch.setattr(main, "_AI_FALLBACK_ORDER_REGEX", False)
+    monkeypatch.setattr(webhook, "_AI_FALLBACK_ORDER_REGEX", False)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
@@ -157,12 +157,12 @@ def test_order_updates_customer_stats(client, monkeypatch):
     async def fake_send(*a, **k):
         return {"ok": True}
 
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     async def fake_reply(session, business, sid, text, customer=None):
         order = {"items": [{"name": "Nasi Goreng", "qty": 2, "price": 14000}], "total": 28000, "status": "closed"}
         return ("ok", order, None, True)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")

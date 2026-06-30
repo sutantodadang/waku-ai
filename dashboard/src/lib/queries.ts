@@ -27,7 +27,7 @@ export const useWhatsapp = () => useQuery({ queryKey: keys.whatsapp, queryFn: ap
 export function useUpdateOrderStatus() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, status }: { id: number; status: OrderStatus }) => api.updateOrderStatus(id, status),
+    mutationFn: ({ id, status }: { id: string; status: OrderStatus }) => api.updateOrderStatus(id, status),
     meta: { successMessage: "Status pesanan diperbarui" },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
@@ -125,7 +125,7 @@ export function useDeleteStaff() {
 
 export function useSendOrderPayment() {
   return useMutation({
-    mutationFn: (id: number) => api.sendOrderPayment(id),
+    mutationFn: (id: string) => api.sendOrderPayment(id),
     onSuccess: (res) =>
       res.sent
         ? toast.success("Info pembayaran terkirim ✅")

@@ -8,8 +8,8 @@ import re
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Product
-from services.embeddings import embed_texts
+from app.models import Product
+from app.services.embeddings import embed_texts
 
 logger = logging.getLogger(__name__)
 

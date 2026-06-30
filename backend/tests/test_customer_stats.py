@@ -3,13 +3,13 @@ import asyncio
 from datetime import datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
-import models  # noqa: F401  (populates Base.metadata)
-from database import Base, _run_migrations
-from models import Business, Customer, Order
-from services.order_service import recompute_customer_stats, is_regular, REGULAR_THRESHOLD
+from app import models  # noqa: F401  (populates Base.metadata)
+from app.core.database import Base, _run_migrations
+from app.models import Business, Customer, Order
+from app.services.order_service import recompute_customer_stats, is_regular, REGULAR_THRESHOLD
 
 
 @pytest.fixture
@@ -54,8 +54,12 @@ def _seed_orders(cid, specs):
     """specs: list of (total, status, created_at, items)."""
     async def run():
         async with async_session_factory() as s:
+            next_seq = (await s.execute(
+                select(func.coalesce(func.max(Order.order_seq), 0) + 1).where(Order.business_id == 1)
+            )).scalar_one()
             for total, status, created, items in specs:
-                o = Order(business_id=1, customer_id=cid, items=items, total=total, status=status)
+                o = Order(business_id=1, customer_id=cid, order_seq=next_seq, items=items, total=total, status=status)
+                next_seq += 1
                 s.add(o)
                 await s.flush()
                 o.created_at = created  # override server default for deterministic cadence

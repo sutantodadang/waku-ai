@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from services.whatsapp import send_image, send_message, within_service_window
+from app.services.whatsapp import send_image, send_message, within_service_window
 
 logger = logging.getLogger(__name__)
 

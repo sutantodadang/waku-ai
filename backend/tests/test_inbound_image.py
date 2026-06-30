@@ -7,10 +7,11 @@ import tempfile
 import pytest
 from sqlalchemy import select
 
-import database
-import main
-import models
-import services.whatsapp as wa
+from app.core import database
+from app import models
+from app.services import whatsapp as wa
+from app.api.routers import webhook
+from app.api.constants import UPLOAD_DIR
 from helpers import register, connect_wa
 
 
@@ -97,9 +98,9 @@ def test_inbound_image_saves_messages_and_replies(client, monkeypatch):
             "reply": "Ini Nasi Goreng ya Kak?",
         }
 
-    monkeypatch.setattr(main, "download_media", fake_download)
-    monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "_match_image_with_ai", fake_match_image)
+    monkeypatch.setattr(webhook, "download_media", fake_download)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "_match_image_with_ai", fake_match_image)
 
     # NO caption — should hit the template/confirm reply path
     img_msg = {
@@ -114,7 +115,7 @@ def test_inbound_image_saves_messages_and_replies(client, monkeypatch):
 
     async def _run():
         async with database.async_session_factory() as session:
-            await main._process_tenant_messages(session, biz, [img_msg])
+            await webhook._process_tenant_messages(session, biz, [img_msg])
             await session.commit()
 
     asyncio.run(_run())
@@ -166,7 +167,7 @@ def test_inbound_image_with_caption_routes_to_conversational_pipeline(client, mo
 
     # Record calls to _reply_to_text
     reply_to_text_calls = []
-    _original_reply_to_text = main._reply_to_text
+    _original_reply_to_text = webhook._reply_to_text
 
     async def fake_reply_to_text(session, business, customer, text, message_id, *, save_inbound=True):
         reply_to_text_calls.append({
@@ -177,10 +178,10 @@ def test_inbound_image_with_caption_routes_to_conversational_pipeline(client, mo
         # Call through so outbound message is saved
         await _original_reply_to_text(session, business, customer, text, message_id, save_inbound=save_inbound)
 
-    monkeypatch.setattr(main, "download_media", fake_download)
-    monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "_match_image_with_ai", fake_match_image)
-    monkeypatch.setattr(main, "_reply_to_text", fake_reply_to_text)
+    monkeypatch.setattr(webhook, "download_media", fake_download)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "_match_image_with_ai", fake_match_image)
+    monkeypatch.setattr(webhook, "_reply_to_text", fake_reply_to_text)
 
     img_msg = {
         "from_number": "628777",
@@ -194,7 +195,7 @@ def test_inbound_image_with_caption_routes_to_conversational_pipeline(client, mo
 
     async def _run():
         async with database.async_session_factory() as session:
-            await main._process_tenant_messages(session, biz, [img_msg])
+            await webhook._process_tenant_messages(session, biz, [img_msg])
             await session.commit()
 
     asyncio.run(_run())
@@ -248,10 +249,10 @@ def test_no_visual_match_with_caption_sends_not_available_not_pipeline(client, m
     async def fake_reply_to_text(session, business, customer, text, message_id, *, save_inbound=True):
         reply_to_text_calls.append(text)
 
-    monkeypatch.setattr(main, "download_media", fake_download)
-    monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "_match_image_with_ai", fake_match_image_no_match)
-    monkeypatch.setattr(main, "_reply_to_text", fake_reply_to_text)
+    monkeypatch.setattr(webhook, "download_media", fake_download)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "_match_image_with_ai", fake_match_image_no_match)
+    monkeypatch.setattr(webhook, "_reply_to_text", fake_reply_to_text)
 
     img_msg = {
         "from_number": "629111",
@@ -265,7 +266,7 @@ def test_no_visual_match_with_caption_sends_not_available_not_pipeline(client, m
 
     async def _run():
         async with database.async_session_factory() as session:
-            await main._process_tenant_messages(session, biz, [img_msg])
+            await webhook._process_tenant_messages(session, biz, [img_msg])
             await session.commit()
 
     asyncio.run(_run())
@@ -297,12 +298,12 @@ def test_load_product_image_b64_local_file():
     # Write a tiny PNG to the real UPLOAD_DIR
     png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
     safe_name = "_test_b64_helper.png"
-    dest = os.path.join(main.UPLOAD_DIR, safe_name)
+    dest = os.path.join(UPLOAD_DIR, safe_name)
     try:
         with open(dest, "wb") as f:
             f.write(png_bytes)
 
-        result = main._load_product_image_b64(f"/uploads/{safe_name}")
+        result = webhook._load_product_image_b64(f"/uploads/{safe_name}")
         assert result is not None, "_load_product_image_b64 should return a tuple for existing file"
         b64_str, mime_type = result
         assert mime_type == "image/png"
@@ -314,14 +315,14 @@ def test_load_product_image_b64_local_file():
 
 def test_load_product_image_b64_missing_file():
     """_load_product_image_b64 returns None for a /uploads/ path that does not exist."""
-    result = main._load_product_image_b64("/uploads/_nonexistent_file_xyzabc.png")
+    result = webhook._load_product_image_b64("/uploads/_nonexistent_file_xyzabc.png")
     assert result is None
 
 
 def test_load_product_image_b64_none_url():
     """_load_product_image_b64 returns None when image_url is None or empty."""
-    assert main._load_product_image_b64(None) is None
-    assert main._load_product_image_b64("") is None
+    assert webhook._load_product_image_b64(None) is None
+    assert webhook._load_product_image_b64("") is None
 
 
 def test_inbound_image_graceful_on_download_failure(client, monkeypatch):
@@ -337,8 +338,8 @@ def test_inbound_image_graceful_on_download_failure(client, monkeypatch):
     async def fake_send(*a, **k):
         return {"messages": [{"id": "wamid.out2"}]}
 
-    monkeypatch.setattr(main, "download_media", fake_download_fail)
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "download_media", fake_download_fail)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     img_msg = {
         "from_number": "628888",
@@ -352,7 +353,7 @@ def test_inbound_image_graceful_on_download_failure(client, monkeypatch):
 
     async def _run():
         async with database.async_session_factory() as session:
-            await main._process_tenant_messages(session, biz, [img_msg])
+            await webhook._process_tenant_messages(session, biz, [img_msg])
             await session.commit()
 
     asyncio.run(_run())

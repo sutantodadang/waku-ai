@@ -77,7 +77,7 @@ export const api = {
   // ── Dashboard ──
   summary: () => req<DashboardSummary>("/api/dashboard/summary"),
   orders: (status?: string) => req<Order[]>(`/api/orders${status ? `?status=${status}` : ""}`),
-  updateOrderStatus: (id: number, status: OrderStatus) =>
+  updateOrderStatus: (id: string, status: OrderStatus) =>
     req<Order>(`/api/orders/${id}`, { method: "PATCH", ...body({ status }) }),
 
   // ── Catalog ──
@@ -101,7 +101,7 @@ export const api = {
   listStaff: () => req<Staff[]>("/api/staff"),
   createStaff: (name: string) => req<Staff>("/api/staff", { method: "POST", ...body({ name }) }),
   deleteStaff: (id: number) => req<{ ok: boolean }>(`/api/staff/${id}`, { method: "DELETE" }),
-  sendOrderPayment: (id: number) =>
+  sendOrderPayment: (id: string) =>
     req<{ sent: boolean }>(`/api/orders/${id}/send-payment`, { method: "POST" }),
 
   // ── Bookings ──
@@ -140,11 +140,25 @@ export const api = {
     return BASE + data.url;
   },
 
+  // ── Sales report (xlsx blob) ──
+  async downloadSalesReport(month: string): Promise<{ blob: Blob; filename: string }> {
+    const t = authStore.getToken();
+    const res = await fetch(`${BASE}/api/reports/sales?month=${month}`, {
+      headers: t ? { Authorization: `Bearer ${t}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, "Gagal membuat laporan penjualan.");
+    return { blob: await res.blob(), filename: `laporan-penjualan-${month}.xlsx` };
+  },
+
   // ── QRIS generate (JSON) ──
   async generateQris(payload: string): Promise<string> {
+    const t = authStore.getToken();
     const res = await fetch(BASE + "/api/qris/generate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(t ? { Authorization: `Bearer ${t}` } : {}),
+      },
       body: JSON.stringify({ payload }),
     });
     if (!res.ok) throw new ApiError(res.status, "Gagal membuat QR dari payload QRIS.");

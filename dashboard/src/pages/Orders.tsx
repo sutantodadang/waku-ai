@@ -25,7 +25,7 @@ export default function Orders() {
   const { data, isLoading, error } = useOrders(filter === "semua" ? undefined : filter);
   const upd = useUpdateOrderStatus();
   const sendPay = useSendOrderPayment();
-  const set = (id: number, status: OrderStatus) => upd.mutate({ id, status });
+  const set = (id: string, status: OrderStatus) => upd.mutate({ id, status });
 
   return (
     <div>
@@ -61,7 +61,7 @@ export default function Orders() {
               <div className="min-w-0">
                 <p className="truncate font-bold text-ink">{o.customer_name}</p>
                 <p className="mt-0.5 text-xs text-ink/45">
-                  #{o.id} • {new Date(o.created_at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  #{String(o.order_seq).padStart(4, "0")} • {new Date(o.created_at).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                 </p>
               </div>
               <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${BADGE[o.status] ?? "bg-ink/5 text-ink/60"}`}>

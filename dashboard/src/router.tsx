@@ -7,6 +7,7 @@ import Catalog from "./pages/Catalog";
 import Customers from "./pages/Customers";
 import Settings from "./pages/Settings";
 import Whatsapp from "./pages/Whatsapp";
+import Panduan from "./pages/Panduan";
 
 const rootRoute = createRootRoute({ component: Layout });
 
@@ -17,8 +18,9 @@ const catalogRoute = createRoute({ getParentRoute: () => rootRoute, path: "/cata
 const customersRoute = createRoute({ getParentRoute: () => rootRoute, path: "/customers", component: Customers });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: Settings });
 const whatsappRoute = createRoute({ getParentRoute: () => rootRoute, path: "/whatsapp", component: Whatsapp });
+const panduanRoute = createRoute({ getParentRoute: () => rootRoute, path: "/panduan", component: Panduan });
 
-const routeTree = rootRoute.addChildren([indexRoute, ordersRoute, bookingsRoute, customersRoute, catalogRoute, settingsRoute, whatsappRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, ordersRoute, bookingsRoute, customersRoute, catalogRoute, settingsRoute, whatsappRoute, panduanRoute]);
 
 export const router = createRouter({ routeTree });
 

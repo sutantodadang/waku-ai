@@ -6,7 +6,7 @@ customer received QRIS first, then the order confirmation — jarring UX.
 Fix: set `send_payment_after = True`, defer the `_maybe_send_payment` call
 until AFTER `send_message(reply)` + `save_message(...)`.
 """
-import main
+from app.api.routers import webhook
 from helpers import register, connect_wa, customer_message, auth
 
 
@@ -41,9 +41,9 @@ def test_confirm_sent_before_payment(client, monkeypatch):
             True,
         )
 
-    monkeypatch.setattr(main, "send_payment_info", fake_pay)
-    monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "send_payment_info", fake_pay)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_OC", access_token="TKN_OC")
@@ -83,9 +83,9 @@ def test_payment_still_sent_on_close(client, monkeypatch):
             True,
         )
 
-    monkeypatch.setattr(main, "send_payment_info", fake_pay)
-    monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "send_payment_info", fake_pay)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_OC2", access_token="TKN_OC2")

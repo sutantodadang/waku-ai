@@ -6,7 +6,7 @@ from sqlalchemy import inspect
 @pytest.mark.asyncio
 async def test_product_and_business_phase_b_columns_present(client):
     """The app fixture runs init_db(); new columns must exist after startup."""
-    import database
+    from app.core import database
 
     async with database.engine.begin() as conn:
         cols = await conn.run_sync(

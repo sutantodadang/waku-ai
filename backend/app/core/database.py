@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import os
 import logging
+
+from app.core.ids import uuid7
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
@@ -142,6 +144,45 @@ def _run_migrations(sync_conn) -> None:
             if name not in msg_existing:
                 sync_conn.exec_driver_sql(f"ALTER TABLE messages ADD COLUMN {name} {ddl}")
                 logger.info("Migration: added messages.%s", name)
+    # orders: migrate legacy integer PK → UUIDv7 string PK + per-business order_seq.
+    if "orders" in insp.get_table_names():
+        ord_cols = {c["name"]: str(c["type"]).upper() for c in insp.get_columns("orders")}
+        id_type = ord_cols.get("id", "")
+        if "INT" in id_type:
+            legacy = sync_conn.exec_driver_sql(
+                "SELECT id, business_id, customer_id, items, total, status, created_at "
+                "FROM orders ORDER BY business_id, created_at, id"
+            ).fetchall()
+            sync_conn.exec_driver_sql("ALTER TABLE orders RENAME TO orders_legacy")
+            sync_conn.exec_driver_sql(
+                "CREATE TABLE orders ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "business_id INTEGER NOT NULL, "
+                "customer_id INTEGER NOT NULL, "
+                "order_seq INTEGER NOT NULL DEFAULT 0, "
+                "items JSON NOT NULL, "
+                "total FLOAT, "
+                "status VARCHAR(32), "
+                "created_at DATETIME NOT NULL)"
+            )
+            seq_by_biz: dict[int, int] = {}
+            for r in legacy:
+                biz = r[1]
+                seq_by_biz[biz] = seq_by_biz.get(biz, 0) + 1
+                sync_conn.exec_driver_sql(
+                    "INSERT INTO orders "
+                    "(id, business_id, customer_id, order_seq, items, total, status, created_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (uuid7(), r[1], r[2], seq_by_biz[biz], r[3], r[4], r[5], r[6]),
+                )
+            sync_conn.exec_driver_sql("DROP TABLE orders_legacy")
+            logger.info("Migration: rebuilt orders with UUIDv7 PK + order_seq (%d rows)", len(legacy))
+        elif "order_seq" not in ord_cols:
+            sync_conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN order_seq INTEGER NOT NULL DEFAULT 0")
+            logger.info("Migration: added orders.order_seq")
+        sync_conn.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_business_seq ON orders(business_id, order_seq)"
+        )
 
 
 async def init_db() -> None:

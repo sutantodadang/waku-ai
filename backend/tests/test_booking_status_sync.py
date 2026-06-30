@@ -2,9 +2,10 @@
 import asyncio
 import datetime
 
-import main
-import database, models
-import services.booking_service as bk
+from app.core import database
+from app import models
+from app.services import booking_service as bk
+from app.api.routers import bookings
 from sqlalchemy import select
 from helpers import register, connect_wa, auth
 
@@ -36,8 +37,8 @@ def test_confirm_notifies_and_sends_deposit(client, monkeypatch):
     async def cap_pay(session, business, customer, total):
         pay["total"] = total; return True
 
-    monkeypatch.setattr(main, "send_message", cap_send)
-    monkeypatch.setattr(main, "send_payment_info", cap_pay)
+    monkeypatch.setattr(bookings, "send_message", cap_send)
+    monkeypatch.setattr(bookings, "send_payment_info", cap_pay)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")

@@ -9,6 +9,7 @@ const WARUNG_ITEMS: NavItem[] = [
   { to: "/customers", icon: "👥", label: "Pelanggan" },
   { to: "/catalog", icon: "🏪", label: "Katalog" },
   { to: "/settings", icon: "💬", label: "Auto-Balas" },
+  { to: "/panduan", icon: "📖", label: "Panduan" },
 ];
 
 const BOOKING_ITEMS: NavItem[] = [
@@ -17,6 +18,7 @@ const BOOKING_ITEMS: NavItem[] = [
   { to: "/customers", icon: "👥", label: "Pelanggan" },
   { to: "/catalog", icon: "🏪", label: "Katalog" },
   { to: "/settings", icon: "💬", label: "Auto-Balas" },
+  { to: "/panduan", icon: "📖", label: "Panduan" },
 ];
 
 export default function BottomNav() {

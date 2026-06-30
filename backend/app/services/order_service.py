@@ -12,7 +12,7 @@ from typing import Any, Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Customer, Message, Order, Product
+from app.models import Customer, Message, Order, Product
 
 logger = logging.getLogger(__name__)
 
@@ -246,9 +246,19 @@ async def create_order(
         (it.get("price") or 0) * (it.get("quantity") or 1)
         for it in items
     )
+    next_seq = (
+        await session.execute(
+            select(func.coalesce(func.max(Order.order_seq), 0) + 1).where(
+                Order.business_id == business_id
+            )
+        )
+    ).scalar_one()
+    # ponytail: MAX+1 per business — fine for UMKM volume / single worker.
+    # If concurrent writers ever collide, the uq_orders_business_seq constraint catches it.
     order = Order(
         business_id=business_id,
         customer_id=customer_id,
+        order_seq=next_seq,
         items=items,
         total=total,
         status="pending",
@@ -256,7 +266,7 @@ async def create_order(
     session.add(order)
     await session.flush()
     logger.info(
-        "Order #%d created — business=%d customer=%d total=%.2f",
+        "Order #%s created — business=%d customer=%d total=%.2f",
         order.id, business_id, customer_id, total,
     )
     return order

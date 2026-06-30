@@ -1,5 +1,5 @@
 """Reverse-OTP hardening: code-bound, expiry-checked, single-use, sender-bound."""
-import main
+from app.api.routers import webhook
 from helpers import register, request_otp, deliver_otp_via_wa, auth
 
 
@@ -71,7 +71,7 @@ def test_platform_channel_sends_otp_confirmation(client, monkeypatch):
         sent["n"] += 1
         return {}
 
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
     register(client, phone="081111111111")
     code = request_otp(client, "081111111111")
     r = deliver_otp_via_wa(client, "6281111111111", code)

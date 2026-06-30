@@ -111,9 +111,14 @@ def verify_signature(payload_body: bytes, x_hub_signature_256: Optional[str]) ->
     Verify that the incoming webhook payload was signed by Meta.
     Uses APP_SECRET to compute HMAC‑SHA256 and compare.
     """
-    if not APP_SECRET or not x_hub_signature_256:
-        logger.debug("Signature verification skipped (APP_SECRET or header missing).")
-        return True  # skip verification when not configured
+    if not APP_SECRET:
+        # Dev only: no secret configured, cannot verify. Configure APP_SECRET in prod.
+        logger.debug("Signature verification skipped (APP_SECRET not configured).")
+        return True
+    if not x_hub_signature_256:
+        # Secret IS configured but the request carries no signature — fail closed.
+        logger.error("Webhook missing X-Hub-Signature-256 header — rejected.")
+        return False
 
     expected = "sha256=" + hmac.new(
         APP_SECRET.encode(), payload_body, hashlib.sha256
@@ -360,7 +365,7 @@ import datetime as _dt
 async def within_service_window(session, customer_id: int, hours: int = 24) -> bool:
     """True when the customer messaged inbound within the last `hours` (WA free-form window)."""
     from sqlalchemy import select
-    from models import Message
+    from app.models import Message
     stmt = (
         select(Message.timestamp)
         .where(Message.customer_id == customer_id, Message.direction == "inbound")
