@@ -25,7 +25,7 @@ def _seed(client, token, with_inbound=True):
                                         staff_id=None, total=80000, deposit_amount=20000, notes="")
             await s.commit()
             return b.id
-    return asyncio.get_event_loop().run_until_complete(_run())
+    return asyncio.run(_run())
 
 
 def test_confirm_notifies_and_sends_deposit(client, monkeypatch):

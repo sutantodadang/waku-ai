@@ -1,37 +1,46 @@
-"""Pytest fixtures for the Waku backend.
-
-Env is set BEFORE importing the app so the module-global engine, crypto key, and
-JWT secret are configured. Each `client` test gets a fresh on-disk SQLite DB.
-"""
+"""Pytest fixtures for the Waku backend (PostgreSQL via testcontainers)."""
+import asyncio
+import atexit
 import os
 
 from cryptography.fernet import Fernet
+from testcontainers.postgres import PostgresContainer
 
-# ── Configure env before importing app modules ───────────────────────────────
-DB_FILE = os.path.join(os.path.dirname(__file__), "_pytest.db")
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{DB_FILE}"
+# ── Start a throwaway Postgres for the whole test session ─────────────────────
+_pg = PostgresContainer("postgres:16-alpine")
+_pg.start()
+atexit.register(_pg.stop)
+_host = _pg.get_container_host_ip()
+_port = _pg.get_exposed_port(5432)
+
+# ── Configure env BEFORE importing app modules ───────────────────────────────
+os.environ["DATABASE_URL"] = (
+    f"postgresql+asyncpg://{_pg.username}:{_pg.password}@{_host}:{_port}/{_pg.dbname}"
+)
+os.environ["DB_DISABLE_POOL"] = "1"  # NullPool — each connection is loop-local
 os.environ.setdefault("JWT_SECRET", "test-secret-at-least-32-bytes-long-abcdef")
 os.environ.setdefault("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
 os.environ["PLATFORM_PHONE_NUMBER_ID"] = "PLATFORM_TEST"
-# No APP_SECRET in tests → webhook signature verification runs in dev skip-mode
-# (the suite posts unsigned webhooks). Fail-closed behavior applies only in prod.
-os.environ["APP_SECRET"] = ""
+os.environ["APP_SECRET"] = ""  # webhook signature runs in dev skip-mode for tests
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import main  # noqa: E402
 from app.api.routers import webhook  # noqa: E402
+from app.core.database import Base, engine  # noqa: E402
+
+
+async def _reset_schema():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
 
 
 @pytest.fixture()
 def client():
-    """Fresh DB + app per test. Lifespan runs init_db (create_all + migrations)."""
-    if os.path.exists(DB_FILE):
-        os.remove(DB_FILE)
-    # webhook routing compares against this module global
+    """Fresh schema + app per test."""
+    asyncio.run(_reset_schema())
     webhook.PLATFORM_PHONE_NUMBER_ID = "PLATFORM_TEST"
     with TestClient(main.app) as c:
         yield c
-    if os.path.exists(DB_FILE):
-        os.remove(DB_FILE)

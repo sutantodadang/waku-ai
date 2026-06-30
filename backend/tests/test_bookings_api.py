@@ -21,7 +21,7 @@ def _seed_booking(client, token, when=None):
                                         staff_id=None, total=80000, deposit_amount=None, notes="")
             await s.commit()
             return b.id
-    return asyncio.get_event_loop().run_until_complete(_run())
+    return asyncio.run(_run())
 
 
 def test_list_and_patch_status(client):
