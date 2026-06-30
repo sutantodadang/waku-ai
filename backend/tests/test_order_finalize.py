@@ -1,5 +1,5 @@
 """LLM close-order is persisted once; a later close amends it, not duplicates."""
-from app import main
+from app.api.routers import webhook
 from helpers import register, connect_wa, customer_message, auth
 
 
@@ -10,12 +10,12 @@ def _ai_order(items, total):
 def test_close_creates_single_order(client, monkeypatch):
     async def fake_send(*a, **k):
         return {"ok": True}
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     async def fake_reply(session, business, sid, text, customer=None):
         order = _ai_order([{"name": "Nasi Goreng", "qty": 2, "price": 14000}], 28000) if "itu aja" in text else None
         return ("ok kak", order, None, True)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
@@ -30,7 +30,7 @@ def test_close_creates_single_order(client, monkeypatch):
 def test_second_close_amends_existing(client, monkeypatch):
     async def fake_send(*a, **k):
         return {"ok": True}
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     seq = iter([
         _ai_order([{"name": "Nasi Goreng", "qty": 1, "price": 14000}], 14000),
@@ -39,7 +39,7 @@ def test_second_close_amends_existing(client, monkeypatch):
 
     async def fake_reply(session, business, sid, text, customer=None):
         return ("ok", next(seq), None, True) if "itu aja" in text else ("ok", None, None, True)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
@@ -58,7 +58,7 @@ def test_regex_fallback_only_when_ai_unreachable(client, monkeypatch):
     """
     async def fake_send(*a, **k):
         return {"ok": True}
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
@@ -68,7 +68,7 @@ def test_regex_fallback_only_when_ai_unreachable(client, monkeypatch):
     # Even though the message names a catalog product, NO order must be created.
     async def fake_reply_reachable(session, business, sid, text, customer=None):
         return ("ok", None, None, True)  # ai_ok=True, no closed order
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply_reachable)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply_reachable)
 
     customer_message(client, "PNID_T", "628123", "beli 2 nasi goreng")
     orders = client.get("/api/orders", headers=auth(t["access_token"])).json()
@@ -83,7 +83,7 @@ def test_regex_fallback_only_when_ai_unreachable(client, monkeypatch):
             None,
             False,  # ai_ok=False — AI was unreachable
         )
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply_unreachable)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply_unreachable)
 
     customer_message(client, "PNID_T", "628456", "beli 2 nasi goreng")
     orders2 = client.get("/api/orders", headers=auth(t["access_token"])).json()

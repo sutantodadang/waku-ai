@@ -3,7 +3,8 @@
 NOTE: _generate_ai_reply returns a 4-tuple (reply, ai_order, ai_booking, ai_ok).
 All fake_reply stubs here return the corrected 4-tuple form.
 """
-from app import main
+from app.api.routers import webhook
+from app.api.routers import orders as orders_router
 from helpers import register, connect_wa, customer_message, auth
 
 
@@ -21,15 +22,15 @@ def test_auto_send_payment_after_order_closed(client, monkeypatch):
     async def fake_pay(session, business, customer, total):
         calls.append(total)
         return True
-    monkeypatch.setattr(main, "send_payment_info", fake_pay)
+    monkeypatch.setattr(webhook, "send_payment_info", fake_pay)
 
     async def fake_send(*a, **k):
         return {"ok": True}
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
         return ("ok", {"items": [{"name": "Nasi Goreng", "qty": 1, "price": 14000}], "total": 14000, "status": "closed"}, None, True)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_A", access_token="TKN_A")
@@ -47,15 +48,16 @@ def test_dashboard_send_payment_endpoint(client, monkeypatch):
     async def fake_pay(session, business, customer, total):
         sent["total"] = total
         return True
-    monkeypatch.setattr(main, "send_payment_info", fake_pay)
+    monkeypatch.setattr(webhook, "send_payment_info", fake_pay)
+    monkeypatch.setattr(orders_router, "send_payment_info", fake_pay)
 
     async def fake_send(*a, **k):
         return {"ok": True}
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
         return ("ok", {"items": [{"name": "Nasi Goreng", "qty": 1, "price": 14000}], "total": 14000, "status": "closed"}, None, True)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")
@@ -77,15 +79,15 @@ def test_payment_intent_triggers_send(client, monkeypatch):
     async def fake_pay(session, business, customer, total):
         calls.append(total)
         return True
-    monkeypatch.setattr(main, "send_payment_info", fake_pay)
+    monkeypatch.setattr(webhook, "send_payment_info", fake_pay)
 
     async def fake_send(*a, **k):
         return {"ok": True}
-    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "send_message", fake_send)
 
     async def fake_reply(session, business, sid, text, extracted_order=None, customer=None):
         return ("info bayar ya kak", None, None, True)
-    monkeypatch.setattr(main, "_generate_ai_reply", fake_reply)
+    monkeypatch.setattr(webhook, "_generate_ai_reply", fake_reply)
 
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id="PNID_T", access_token="TKN_T")

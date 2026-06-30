@@ -1,13 +1,13 @@
 """Customer endpoints: scoping, update, bounds."""
-from app import main
+from app.api.routers import webhook
 from helpers import register, connect_wa, customer_message, auth
 
 
 def _setup(client, monkeypatch, pnid="PNID_C"):
     async def fake_send(*a, **k):
         return {"ok": True}
-    monkeypatch.setattr(main, "send_message", fake_send)
-    monkeypatch.setattr(main, "AI_SERVICE_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr(webhook, "send_message", fake_send)
+    monkeypatch.setattr(webhook, "AI_SERVICE_URL", "http://127.0.0.1:9")
     t = register(client)
     connect_wa(client, t["access_token"], phone_number_id=pnid, access_token="TKN")
     client.post("/api/products", headers=auth(t["access_token"]), json={"name": "Nasi Goreng", "price": 14000})

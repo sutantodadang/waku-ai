@@ -10,9 +10,9 @@ SAMPLE_PAYLOAD = (
 
 def test_generate_qris_returns_png_url(client, tmp_path, monkeypatch):
     """Valid payload → 200 with /uploads/qris_*.png URL; file is valid PNG."""
-    from app import main
+    from app.api.routers import media
     upload_dir = str(tmp_path)
-    monkeypatch.setattr(main, "UPLOAD_DIR", upload_dir)
+    monkeypatch.setattr(media, "UPLOAD_DIR", upload_dir)
 
     r = client.post("/api/qris/generate", json={"payload": SAMPLE_PAYLOAD})
     assert r.status_code == 200, r.text

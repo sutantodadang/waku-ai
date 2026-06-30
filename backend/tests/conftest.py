@@ -18,6 +18,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import main  # noqa: E402
+from app.api.routers import webhook  # noqa: E402
 
 
 @pytest.fixture()
@@ -26,7 +27,7 @@ def client():
     if os.path.exists(DB_FILE):
         os.remove(DB_FILE)
     # webhook routing compares against this module global
-    main.PLATFORM_PHONE_NUMBER_ID = "PLATFORM_TEST"
+    webhook.PLATFORM_PHONE_NUMBER_ID = "PLATFORM_TEST"
     with TestClient(main.app) as c:
         yield c
     if os.path.exists(DB_FILE):
