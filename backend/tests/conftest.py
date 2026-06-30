@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 from testcontainers.postgres import PostgresContainer
 
 # ── Start a throwaway Postgres for the whole test session ─────────────────────
-_pg = PostgresContainer("postgres:16-alpine")
+_pg = PostgresContainer("postgres:18-alpine")
 _pg.start()
 atexit.register(_pg.stop)
 _host = _pg.get_container_host_ip()

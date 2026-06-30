@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: waku
       POSTGRES_PASSWORD: waku
@@ -10,7 +10,8 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # PG18 stores data under /var/lib/postgresql (version-subdir), not /data.
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U waku -d waku"]
       interval: 5s
