@@ -113,6 +113,7 @@ def call_openai(messages: list[dict], model: Optional[str] = None, temperature: 
                 headers={
                     "Authorization": f"Bearer {settings.openai_api_key}",
                     "Content-Type": "application/json",
+                    **settings.openrouter_headers,
                 },
                 json={
                     "model": model,
@@ -303,7 +304,7 @@ def match_image_to_catalog(image_b64: str, mime_type: str, caption: str, catalog
         },
     ]
 
-    answer = call_openai(messages, max_tokens=30, temperature=0.0)
+    answer = call_openai(messages, model=settings.vision_model, max_tokens=30, temperature=0.0)
 
     if not answer or not answer.strip():
         logger.warning("match_image_to_catalog: no answer from LLM (text-only model?)")
