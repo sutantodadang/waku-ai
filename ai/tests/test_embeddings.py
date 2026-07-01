@@ -13,9 +13,14 @@ def test_cosine_zero_vector_is_zero():
     assert embeddings.cosine([0.0, 0.0], [1.0, 1.0]) == 0.0
 
 
-def test_embed_texts_uses_provider(monkeypatch):
-    monkeypatch.setattr(embeddings, "_embed_openai", lambda texts: [[0.1, 0.2]] * len(texts))
-    monkeypatch.setattr(embeddings.settings, "llm_provider", "openai")
-    monkeypatch.setattr(type(embeddings.settings), "use_openai", property(lambda self: True))
+def test_embed_texts_uses_hf(monkeypatch):
+    monkeypatch.setattr(embeddings, "_embed_hf", lambda texts: [[0.1, 0.2]] * len(texts))
     out = embeddings.embed_texts(["a", "b"])
     assert out == [[0.1, 0.2], [0.1, 0.2]]
+
+
+def test_embed_texts_raises_when_hf_down(monkeypatch):
+    import pytest
+    monkeypatch.setattr(embeddings, "_embed_hf", lambda texts: None)
+    with pytest.raises(RuntimeError):
+        embeddings.embed_texts(["a"])

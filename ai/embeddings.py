@@ -1,4 +1,9 @@
-"""Embeddings for hybrid catalog retrieval — OpenAI-compatible or Ollama."""
+"""Embeddings for hybrid catalog retrieval — HuggingFace Inference only.
+
+Pinned to a single provider on purpose: mixing providers/models yields vectors
+in incompatible spaces (even at equal dims), which silently corrupts cosine
+similarity. If HF is unavailable, embed_texts raises and the backend degrades
+to keyword-only retrieval (non-blocking)."""
 import logging
 import math
 from typing import Optional
@@ -22,55 +27,40 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def _embed_openai(texts: list[str]) -> Optional[list[list[float]]]:
-    if not settings.embed_api_key:
+def _embed_hf(texts: list[str]) -> Optional[list[list[float]]]:
+    """HuggingFace Inference feature-extraction. Returns one vector per text
+    (sentence-transformers models pool to 2D: list[list[float]])."""
+    if not settings.hf_api_key:
         return None
-    url = f"{settings.embed_base_url.rstrip('/')}/embeddings"
-    if settings.embed_input_format == "openrouter":
-        payload_input = [{"content": [{"type": "text", "text": t}]} for t in texts]
-    else:
-        payload_input = texts
+    url = (f"{settings.hf_embed_base_url.rstrip('/')}/hf-inference/models/"
+           f"{settings.hf_embed_model}/pipeline/feature-extraction")
     try:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(
                 url,
-                headers={
-                    "Authorization": f"Bearer {settings.embed_api_key}",
-                    "Content-Type": "application/json",
-                    **settings.openrouter_headers,
-                },
-                json={"model": settings.embed_model, "input": payload_input},
+                headers={"Authorization": f"Bearer {settings.hf_api_key}"},
+                json={"inputs": texts, "options": {"wait_for_model": True}},
             )
             resp.raise_for_status()
             data = resp.json()
-            return [row["embedding"] for row in data["data"]]
+            # sentence-transformers → 2D. Guard against a single-text 1D response.
+            if data and isinstance(data[0], (int, float)):
+                data = [data]
+            return data
     except (httpx.HTTPError, KeyError, ValueError) as exc:
-        logger.error("Embeddings (OpenAI-compatible) failed: %s", exc)
-        return None
-
-
-def _embed_ollama(texts: list[str]) -> Optional[list[list[float]]]:
-    url = f"{settings.ollama_base_url.rstrip('/')}/api/embeddings"
-    vectors: list[list[float]] = []
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            for text in texts:
-                resp = client.post(url, json={"model": settings.ollama_embed_model, "prompt": text})
-                resp.raise_for_status()
-                vectors.append(resp.json()["embedding"])
-        return vectors
-    except (httpx.HTTPError, KeyError, ValueError) as exc:
-        logger.error("Ollama embeddings failed: %s", exc)
+        logger.error("HuggingFace embeddings failed: %s", exc)
         return None
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts. Raises RuntimeError if the provider is unavailable."""
+    """Embed a batch of texts via HuggingFace. Raises RuntimeError if unavailable.
+
+    No cross-provider fallback — see module docstring."""
     if not texts:
         return []
-    vectors = _embed_openai(texts) if settings.use_openai else _embed_ollama(texts)
+    vectors = _embed_hf(texts)
     if vectors is None:
-        raise RuntimeError("Embedding provider unavailable")
+        raise RuntimeError("Embedding provider unavailable (HuggingFace)")
     return vectors
 
 

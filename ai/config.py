@@ -7,7 +7,12 @@ load_dotenv()
 
 
 class Settings:
-    # OpenAI-compatible API (chat)
+    # Chat primary: DeepSeek (OpenAI-compatible)
+    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
+    deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+
+    # Chat/embed fallback: OpenRouter (OpenAI-compatible). Also used for vision.
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     llm_model: str = os.getenv("LLM_MODEL", "cohere/north-mini-code:free")
@@ -16,9 +21,11 @@ class Settings:
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "llama3")
 
-    # Embeddings (Phase B hybrid retrieval)
-    embed_model: str = os.getenv("EMBED_MODEL", "nvidia/llama-nemotron-embed-vl-1b-v2:free")
-    ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+    # Embeddings: HuggingFace Inference only (feature-extraction). Pinned to one
+    # provider — cross-provider fallback breaks vector-space compatibility.
+    hf_api_key: str = os.getenv("HF_API_KEY", "")
+    hf_embed_model: str = os.getenv("HF_EMBED_MODEL", "google/embeddinggemma-300m")
+    hf_embed_base_url: str = os.getenv("HF_EMBED_BASE_URL", "https://router.huggingface.co")
 
     # Service
     service_port: int = int(os.getenv("AI_SERVICE_PORT", "8001"))
@@ -36,33 +43,28 @@ class Settings:
     openrouter_app_name: str = os.getenv("OPENROUTER_APP_NAME", "")
 
     @property
+    def use_deepseek(self) -> bool:
+        """Primary chat provider — used when a DeepSeek key is set and Ollama isn't forced."""
+        return self.llm_provider != "ollama" and bool(self.deepseek_api_key.strip())
+
+    @property
     def use_openai(self) -> bool:
         if self.llm_provider == "openai":
             return True
         if self.llm_provider == "ollama":
             return False
-        # auto: use OpenAI if key is set
+        # auto: use OpenAI-compatible fallback (OpenRouter) if key is set
         return bool(self.openai_api_key.strip())
 
     @property
     def vision_model(self) -> str:
-        """Vision model for image tasks; falls back to llm_model when unset."""
+        """OpenRouter vision model (fallback); falls back to llm_model when unset."""
         return os.getenv("VISION_MODEL", "") or self.llm_model
 
     @property
-    def embed_base_url(self) -> str:
-        """Base URL for embedding calls; falls back to chat base URL when unset."""
-        return os.getenv("EMBED_BASE_URL", "") or self.openai_base_url
-
-    @property
-    def embed_api_key(self) -> str:
-        """API key for embedding calls; falls back to chat API key when unset."""
-        return os.getenv("EMBED_API_KEY", "") or self.openai_api_key
-
-    @property
-    def embed_input_format(self) -> str:
-        """Input format for embeddings: 'openrouter' (content-array) or 'openai' (plain strings)."""
-        return os.getenv("EMBED_INPUT_FORMAT", "openai")
+    def deepseek_vision_model(self) -> str:
+        """DeepSeek vision model (primary); falls back to deepseek_model when unset."""
+        return os.getenv("DEEPSEEK_VISION_MODEL", "") or self.deepseek_model
 
     @property
     def openrouter_headers(self) -> dict:

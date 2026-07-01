@@ -97,21 +97,28 @@ def _extract_content(data: dict) -> Optional[str]:
 # ──────────────────────────────────────────────
 
 def call_openai(messages: list[dict], model: Optional[str] = None, temperature: float = 0.7,
-                max_tokens: int = 1024) -> Optional[str]:
-    """Call an OpenAI-compatible API and return the response content."""
-    if not settings.openai_api_key:
-        logger.warning("OPENAI_API_KEY not set, skipping OpenAI call")
+                max_tokens: int = 1024, base_url: Optional[str] = None,
+                api_key: Optional[str] = None) -> Optional[str]:
+    """Call an OpenAI-compatible API and return the response content.
+
+    Defaults target OpenRouter (fallback/vision). Pass base_url/api_key/model
+    to reach another provider (e.g. DeepSeek primary chat).
+    """
+    api_key = api_key or settings.openai_api_key
+    base_url = base_url or settings.openai_base_url
+    if not api_key:
+        logger.warning("No API key for %s, skipping call", base_url)
         return None
 
     model = model or settings.llm_model
-    url = f"{settings.openai_base_url.rstrip('/')}/chat/completions"
+    url = f"{base_url.rstrip('/')}/chat/completions"
 
     try:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(
                 url,
                 headers={
-                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                     **settings.openrouter_headers,
                 },
@@ -201,15 +208,25 @@ def ask_llm(messages: list[dict], intent: str = "UNKNOWN",
     full_messages.extend(messages)
     provider = settings.llm_provider
 
-    # OpenAI-compatible path
+    # Primary: DeepSeek (OpenAI-compatible)
+    if settings.use_deepseek:
+        response = call_openai(full_messages, model=settings.deepseek_model,
+                               base_url=settings.deepseek_base_url,
+                               api_key=settings.deepseek_api_key,
+                               temperature=temperature, max_tokens=max_tokens)
+        if response and response.strip():
+            logger.info("Used DeepSeek")
+            return response
+
+    # Fallback: OpenRouter (OpenAI-compatible)
     if settings.use_openai:
         response = call_openai(full_messages, temperature=temperature, max_tokens=max_tokens)
         if response and response.strip():
-            logger.info("Used OpenAI-compatible API")
+            logger.info("Used OpenRouter (fallback)")
             return response
         if provider == "openai":
             # Explicitly OpenAI-only: do NOT fall back to Ollama.
-            logger.warning(f"OpenAI returned no usable content; rule fallback for intent={intent}")
+            logger.warning(f"OpenAI-compatible returned no usable content; rule fallback for intent={intent}")
             return get_fallback_response(intent)
 
     # Ollama path (auto or ollama only — never when provider is openai)
@@ -304,7 +321,14 @@ def match_image_to_catalog(image_b64: str, mime_type: str, caption: str, catalog
         },
     ]
 
-    answer = call_openai(messages, model=settings.vision_model, max_tokens=30, temperature=0.0)
+    # Primary: DeepSeek vision; fallback: OpenRouter vision.
+    answer = None
+    if settings.use_deepseek:
+        answer = call_openai(messages, model=settings.deepseek_vision_model, max_tokens=30,
+                             temperature=0.0, base_url=settings.deepseek_base_url,
+                             api_key=settings.deepseek_api_key)
+    if not answer or not answer.strip():
+        answer = call_openai(messages, model=settings.vision_model, max_tokens=30, temperature=0.0)
 
     if not answer or not answer.strip():
         logger.warning("match_image_to_catalog: no answer from LLM (text-only model?)")
