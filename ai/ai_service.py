@@ -252,13 +252,15 @@ async def ai_embed(request: EmbedRequest):
 @app.on_event("startup")
 async def startup():
     logger.info("Waku AI Service starting...")
-    logger.info(f"LLM Provider: {'OpenAI-compatible' if settings.use_openai else 'Ollama (local)'}")
+    # Chat providers, in fallback order
+    if settings.use_deepseek:
+        logger.info(f"Chat primary: DeepSeek — {settings.deepseek_model} @ {settings.deepseek_base_url}")
     if settings.use_openai:
-        logger.info(f"  Model: {settings.llm_model}")
-        logger.info(f"  Base URL: {settings.openai_base_url}")
-    else:
-        logger.info(f"  Ollama Model: {settings.ollama_model}")
-        logger.info(f"  Ollama URL: {settings.ollama_base_url}")
+        label = "primary" if not settings.use_deepseek else "fallback"
+        logger.info(f"Chat {label}: OpenRouter — {settings.llm_model} @ {settings.openai_base_url}")
+    if settings.llm_provider != "openai":
+        logger.info(f"Chat last-resort: Ollama — {settings.ollama_model} @ {settings.ollama_base_url}")
+    logger.info(f"Embeddings: HuggingFace — {settings.hf_embed_model} @ {settings.hf_embed_base_url}")
     logger.info(f"Max context messages: {settings.max_context_messages}")
 
 
